@@ -2,6 +2,20 @@ cmake_minimum_required(VERSION 3.14)
 
 project(ntfs-uefi)
 
+if(MSVC)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /ENTRY:efi_main")
+    add_compile_options("/GS-")
+    string(REGEX REPLACE "/RTC(su|[1su])" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+    string(REGEX REPLACE "/RTC(su|[1su])" "" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
+
+    # work around bug in Visual Studio
+    if (${MSVC_CXX_ARCHITECTURE_ID} STREQUAL "X86")
+        set(CMAKE_SYSTEM_PROCESSOR "X86")
+    endif()
+else()
+    add_compile_options(-fno-stack-check -fno-stack-protector -mno-stack-arg-probe)
+endif()
+
 include_directories(/usr/include/efi)
 if (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "AMD64" OR ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
     include_directories(/usr/include/efi/x86_64)
@@ -9,7 +23,9 @@ elseif (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "X86")
     include_directories(/usr/include/efi/ia32)
 endif()
 
-set(SRC_FILES src/ntfs.c)
+set(SRC_FILES src/ntfs.c
+    src/misc.c
+)
 
 add_executable(ntfs ${SRC_FILES})
 
