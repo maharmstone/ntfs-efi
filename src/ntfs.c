@@ -14,6 +14,12 @@ typedef struct {
     EFI_DISK_IO_PROTOCOL* disk_io;
 } volume;
 
+typedef struct {
+    EFI_FILE_PROTOCOL proto;
+    uint64_t inode;
+    volume* vol;
+} inode;
+
 static EFI_SYSTEM_TABLE* systable;
 static EFI_BOOT_SERVICES* bs;
 static EFI_DRIVER_BINDING_PROTOCOL drvbind;
@@ -43,11 +49,121 @@ static EFI_STATUS drv_supported(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE Co
                             ControllerHandle, EFI_OPEN_PROTOCOL_TEST_PROTOCOL);
 }
 
-static EFI_STATUS EFIAPI open_volume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* This, EFI_FILE_PROTOCOL** Root) {
-    systable->ConOut->OutputString(systable->ConOut, L"open_volume\r\n");
+static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FILE_HANDLE** NewHandle, CHAR16* FileName,
+                                   UINT64 OpenMode, UINT64 Attributes) {
+    systable->ConOut->OutputString(systable->ConOut, L"file_open\r\n");
+
     // FIXME
 
-    return EFI_INVALID_PARAMETER;
+    return EFI_UNSUPPORTED;
+}
+
+static EFI_STATUS EFIAPI file_close(struct _EFI_FILE_HANDLE* File) {
+    systable->ConOut->OutputString(systable->ConOut, L"file_close\r\n");
+
+    // FIXME
+
+    return EFI_UNSUPPORTED;
+}
+
+static EFI_STATUS EFIAPI file_delete(struct _EFI_FILE_HANDLE* File) {
+    UNUSED(File);
+
+    return EFI_UNSUPPORTED;
+}
+
+static EFI_STATUS EFIAPI file_read(struct _EFI_FILE_HANDLE* File, UINTN* BufferSize, VOID* Buffer) {
+    systable->ConOut->OutputString(systable->ConOut, L"file_read\r\n");
+
+    // FIXME
+
+    return EFI_UNSUPPORTED;
+}
+
+static EFI_STATUS EFIAPI file_write(struct _EFI_FILE_HANDLE* File, UINTN* BufferSize, VOID* Buffer) {
+    UNUSED(File);
+    UNUSED(BufferSize);
+    UNUSED(Buffer);
+
+    return EFI_UNSUPPORTED;
+}
+
+static EFI_STATUS EFIAPI file_set_position(struct _EFI_FILE_HANDLE* File, UINT64 Position) {
+    systable->ConOut->OutputString(systable->ConOut, L"file_set_position\r\n");
+
+    // FIXME
+
+    return EFI_UNSUPPORTED;
+}
+
+static EFI_STATUS EFIAPI file_get_position(struct _EFI_FILE_HANDLE* File, UINT64* Position) {
+    systable->ConOut->OutputString(systable->ConOut, L"file_get_position\r\n");
+
+    // FIXME
+
+    return EFI_UNSUPPORTED;
+}
+
+static EFI_STATUS EFIAPI file_get_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* InformationType, UINTN* BufferSize, VOID* Buffer) {
+    systable->ConOut->OutputString(systable->ConOut, L"file_get_info\r\n");
+
+    // FIXME
+
+    return EFI_UNSUPPORTED;
+}
+
+static EFI_STATUS EFIAPI file_set_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* InformationType, UINTN BufferSize, VOID* Buffer) {
+    UNUSED(File);
+    UNUSED(InformationType);
+    UNUSED(BufferSize);
+    UNUSED(Buffer);
+
+    return EFI_UNSUPPORTED;
+}
+
+static EFI_STATUS file_flush(struct _EFI_FILE_HANDLE* File) {
+    UNUSED(File);
+
+    // nop
+
+    return EFI_SUCCESS;
+}
+
+static void populate_file_handle(EFI_FILE_PROTOCOL* h) {
+    h->Revision = EFI_FILE_PROTOCOL_REVISION;
+    h->Open = file_open;
+    h->Close = file_close;
+    h->Delete = file_delete;
+    h->Read = file_read;
+    h->Write = file_write;
+    h->GetPosition = file_get_position;
+    h->SetPosition = file_set_position;
+    h->GetInfo = file_get_info;
+    h->SetInfo = file_set_info;
+    h->Flush = file_flush;
+}
+
+static EFI_STATUS EFIAPI open_volume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* This, EFI_FILE_PROTOCOL** Root) {
+    EFI_STATUS Status;
+    volume* vol = _CR(This, volume, proto);
+    inode* ino;
+
+    Status = bs->AllocatePool(EfiBootServicesData, sizeof(inode), (void**)&ino);
+    if (EFI_ERROR(Status)) {
+        do_print_error("AllocatePool", Status);
+        return Status;
+    }
+
+    memset(ino, 0, sizeof(inode));
+
+    populate_file_handle(&ino->proto);
+
+    ino->inode = NTFS_ROOT_DIR_INODE;
+    ino->vol = vol;
+
+    *Root = &ino->proto;
+
+    return EFI_SUCCESS;
 }
 
 static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE ControllerHandle,
