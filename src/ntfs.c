@@ -38,6 +38,8 @@ static EFI_SYSTEM_TABLE* systable;
 static EFI_BOOT_SERVICES* bs;
 static EFI_DRIVER_BINDING_PROTOCOL drvbind;
 
+static void populate_file_handle(EFI_FILE_PROTOCOL* h);
+
 static void do_print_error(const char* func, EFI_STATUS Status) {
     // FIXME
 }
@@ -65,13 +67,44 @@ static EFI_STATUS drv_supported(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE Co
 
 static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FILE_HANDLE** NewHandle, CHAR16* FileName,
                                    UINT64 OpenMode, UINT64 Attributes) {
-    systable->ConOut->OutputString(systable->ConOut, L"file_open(");
-    systable->ConOut->OutputString(systable->ConOut, FileName);
-    systable->ConOut->OutputString(systable->ConOut, L")\r\n");
+    EFI_STATUS Status;
+    inode* file = _CR(File, inode, proto);
+    uint64_t inode_num;
+    inode* ino;
 
-    // FIXME
+    if (OpenMode & EFI_FILE_MODE_CREATE)
+        return EFI_UNSUPPORTED;
 
-    return EFI_UNSUPPORTED;
+    if (FileName[0] == L'\\' && FileName[1] == 0)
+        inode_num = NTFS_ROOT_DIR_INODE;
+    else if (FileName[0] == L'.' && FileName[1] == 0)
+        inode_num = file->inode;
+    else {
+        // FIXME
+
+        systable->ConOut->OutputString(systable->ConOut, L"file_open(");
+        systable->ConOut->OutputString(systable->ConOut, FileName);
+        systable->ConOut->OutputString(systable->ConOut, L")\r\n");
+
+        return EFI_UNSUPPORTED;
+    }
+
+    Status = bs->AllocatePool(EfiBootServicesData, sizeof(inode), (void**)&ino);
+    if (EFI_ERROR(Status)) {
+        do_print_error("AllocatePool", Status);
+        return Status;
+    }
+
+    memset(ino, 0, sizeof(inode));
+
+    populate_file_handle(&ino->proto);
+
+    ino->inode = NTFS_ROOT_DIR_INODE;
+    ino->vol = file->vol;
+
+    *NewHandle = &ino->proto;
+
+    return EFI_SUCCESS;
 }
 
 static EFI_STATUS EFIAPI file_close(struct _EFI_FILE_HANDLE* File) {
