@@ -45,6 +45,9 @@ static void populate_file_handle(EFI_FILE_PROTOCOL* h);
 static EFI_STATUS load_inode(inode* ino);
 
 static void do_print_error(const char* func, EFI_STATUS Status) {
+    UNUSED(func);
+    UNUSED(Status);
+
     // FIXME
 }
 
@@ -75,6 +78,8 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
     inode* file = _CR(File, inode, proto);
     uint64_t inode_num;
     inode* ino;
+
+    UNUSED(Attributes);
 
     if (OpenMode & EFI_FILE_MODE_CREATE)
         return EFI_UNSUPPORTED;
@@ -126,6 +131,10 @@ static EFI_STATUS EFIAPI file_delete(struct _EFI_FILE_HANDLE* File) {
 }
 
 static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
+    UNUSED(ino);
+    UNUSED(BufferSize);
+    UNUSED(Buffer);
+
     systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"read_dir\r\n");
 
     // FIXME
@@ -134,6 +143,10 @@ static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
 }
 
 static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
+    UNUSED(ino);
+    UNUSED(BufferSize);
+    UNUSED(Buffer);
+
     systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"read_file\r\n");
 
     // FIXME
@@ -195,6 +208,9 @@ static EFI_STATUS EFIAPI file_set_position(struct _EFI_FILE_HANDLE* File, UINT64
 }
 
 static EFI_STATUS EFIAPI file_get_position(struct _EFI_FILE_HANDLE* File, UINT64* Position) {
+    UNUSED(File);
+    UNUSED(Position);
+
     systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"file_get_position\r\n");
 
     // FIXME
@@ -305,7 +321,6 @@ static void loop_through_atts(const FILE_RECORD_SEGMENT_HEADER* file_record, inv
 static EFI_STATUS load_inode(inode* ino) {
     EFI_STATUS Status;
     FILE_RECORD_SEGMENT_HEADER* file;
-    ATTRIBUTE_RECORD_HEADER* att;
 
     Status = bs->AllocatePool(EfiBootServicesData, ino->vol->file_record_size, (void**)&file);
     if (EFI_ERROR(Status))
@@ -370,6 +385,8 @@ static EFI_STATUS load_inode(inode* ino) {
 }
 
 static void win_time_to_efi(int64_t win, EFI_TIME* efi) {
+    UNUSED(win);
+
     // FIXME
 
     efi->Year = 1970;
@@ -390,7 +407,7 @@ static EFI_STATUS get_inode_file_info(inode* ino, UINTN* BufferSize, VOID* Buffe
     EFI_STATUS Status;
     unsigned int size = offsetof(EFI_FILE_INFO, FileName[0]) + sizeof(CHAR16);
     EFI_FILE_INFO* info = (EFI_FILE_INFO*)Buffer;
-    size_t bs = 0;
+    // size_t bs = 0;
 
     // if (ino->name) {
     //     for (int i = wcslen(ino->name); i >= 0; i--) {
@@ -448,7 +465,6 @@ static EFI_STATUS get_inode_file_info(inode* ino, UINTN* BufferSize, VOID* Buffe
 }
 
 static EFI_STATUS EFIAPI file_get_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* InformationType, UINTN* BufferSize, VOID* Buffer) {
-    EFI_STATUS Status;
     inode* ino = _CR(File, inode, proto);
     EFI_GUID guid = EFI_FILE_INFO_ID;
 
@@ -786,6 +802,11 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
 static EFI_STATUS EFIAPI drv_stop(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE ControllerHandle,
                                   UINTN NumberOfChildren, EFI_HANDLE* ChildHandleBuffer) {
+    UNUSED(This);
+    UNUSED(ControllerHandle);
+    UNUSED(NumberOfChildren);
+    UNUSED(ChildHandleBuffer);
+
     systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"drv_stop\r\n");
     // FIXME
 
