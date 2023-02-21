@@ -28,6 +28,7 @@ typedef struct {
     EFI_FILE_PROTOCOL proto;
     uint64_t inode;
     volume* vol;
+    bool inode_loaded;
 } inode;
 
 static EFI_SYSTEM_TABLE* systable;
@@ -116,12 +117,154 @@ static EFI_STATUS EFIAPI file_get_position(struct _EFI_FILE_HANDLE* File, UINT64
     return EFI_UNSUPPORTED;
 }
 
-static EFI_STATUS EFIAPI file_get_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* InformationType, UINTN* BufferSize, VOID* Buffer) {
-    systable->ConOut->OutputString(systable->ConOut, L"file_get_info\r\n");
+static EFI_STATUS process_fixups(MULTI_SECTOR_HEADER* header, uint64_t length, unsigned int sector_size) {
+    uint64_t sectors;
+    uint16_t* seq;
+    uint8_t* ptr;
+
+    sectors = length / sector_size;
+
+    if (header->UpdateSequenceArraySize < sectors + 1)
+        return EFI_INVALID_PARAMETER;
+
+    seq = (uint16_t*)((uint8_t*)header + header->UpdateSequenceArrayOffset);
+
+    ptr = (uint8_t*)header + sector_size - sizeof(uint16_t);
+
+    for (unsigned int i = 0; i < sectors; i++) {
+        if (*(uint16_t*)ptr != seq[0])
+            return EFI_INVALID_PARAMETER;
+
+        *(uint16_t*)ptr = seq[i + 1];
+
+        ptr += sector_size;
+    }
+
+    return EFI_SUCCESS;
+}
+
+static EFI_STATUS read_from_mappings(volume* vol, LIST_ENTRY* mappings, uint64_t offset, uint8_t* buf,
+                                     uint64_t size) {
+    systable->ConOut->OutputString(systable->ConOut, L"read_from_mappings\r\n");
 
     // FIXME
 
-    return EFI_UNSUPPORTED;
+    return EFI_INVALID_PARAMETER;
+}
+
+static EFI_STATUS load_inode(inode* ino) {
+    EFI_STATUS Status;
+    FILE_RECORD_SEGMENT_HEADER* file;
+
+    Status = bs->AllocatePool(EfiBootServicesData, ino->vol->file_record_size, (void**)&file);
+    if (EFI_ERROR(Status))
+        return Status;
+
+    Status = read_from_mappings(ino->vol, &ino->vol->mft_mappings, ino->inode * ino->vol->file_record_size,
+                                (uint8_t*)file, ino->vol->file_record_size);
+    if (EFI_ERROR(Status)) {
+        bs->FreePool(file);
+        return Status;
+    }
+
+    Status = process_fixups(&file->MultiSectorHeader, ino->vol->file_record_size,
+                            ino->vol->boot_sector->BytesPerSector);
+
+    if (EFI_ERROR(Status)) {
+        bs->FreePool(file);
+        return Status;
+    }
+
+    // FIXME - parse file
+    // FIXME - ATTRIBUTE_LIST
+
+    ino->inode_loaded = true;
+
+    bs->FreePool(file);
+
+    return EFI_SUCCESS;
+}
+
+static void win_time_to_efi(int64_t win, EFI_TIME* efi) {
+    // FIXME
+
+    efi->Year = 1970;
+    efi->Month = 1;
+    efi->Day = 1;
+    efi->Hour = 0;
+    efi->Minute = 0;
+    efi->Second = 0;
+    efi->Pad1 = 0;
+    efi->Nanosecond = 0;
+    efi->TimeZone = 0;
+    efi->Daylight = 0;
+    efi->Pad2 = 0;
+
+}
+
+static EFI_STATUS get_inode_file_info(inode* ino, UINTN* BufferSize, VOID* Buffer) {
+    EFI_STATUS Status;
+    unsigned int size = offsetof(EFI_FILE_INFO, FileName[0]) + sizeof(CHAR16);
+    EFI_FILE_INFO* info = (EFI_FILE_INFO*)Buffer;
+    size_t bs = 0;
+
+    // if (ino->name) {
+    //     for (int i = wcslen(ino->name); i >= 0; i--) {
+    //         if (ino->name[i] == '\\') {
+    //             bs = i;
+    //             break;
+    //         }
+    //     }
+    //
+    //     size += (wcslen(ino->name) - bs - 1) * sizeof(WCHAR);
+    // }
+
+    if (*BufferSize < size) {
+        *BufferSize = size;
+        return EFI_BUFFER_TOO_SMALL;
+    }
+
+    if (!ino->inode_loaded) {
+        Status = load_inode(ino);
+        if (EFI_ERROR(Status)) {
+            do_print_error("load_inode", Status);
+            return Status;
+        }
+    }
+
+    info->Size = size;
+    info->FileSize = 0; // FIXME
+    info->PhysicalSize = 0; // FIXME
+    win_time_to_efi(0, &info->CreateTime); // FIXME
+    win_time_to_efi(0, &info->LastAccessTime); // FIXME
+    win_time_to_efi(0, &info->ModificationTime); // FIXME
+    info->Attribute = 0;
+
+    info->Attribute |= EFI_FILE_DIRECTORY; // FIXME
+
+    // FIXME - EFI_FILE_HIDDEN
+    // FIXME - EFI_FILE_SYSTEM
+    // FIXME - EFI_FILE_ARCHIVE
+
+//     if (ino->name)
+//         memcpy(info->FileName, &ino->name[bs + 1], (wcslen(ino->name) - bs) * sizeof(WCHAR));
+//     else
+        info->FileName[0] = 0;
+
+    return EFI_SUCCESS;
+}
+
+static EFI_STATUS EFIAPI file_get_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* InformationType, UINTN* BufferSize, VOID* Buffer) {
+    EFI_STATUS Status;
+    inode* ino = _CR(File, inode, proto);
+    EFI_GUID guid = EFI_FILE_INFO_ID;
+
+    // FIXME - EFI_FILE_SYSTEM_INFO
+
+    if (memcmp(InformationType, &guid, sizeof(EFI_GUID)))
+        return EFI_UNSUPPORTED;
+
+    return get_inode_file_info(ino, BufferSize, Buffer);
 }
 
 static EFI_STATUS EFIAPI file_set_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* InformationType, UINTN BufferSize, VOID* Buffer) {
@@ -174,32 +317,6 @@ static EFI_STATUS EFIAPI open_volume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* This, EFI_
     ino->vol = vol;
 
     *Root = &ino->proto;
-
-    return EFI_SUCCESS;
-}
-
-static EFI_STATUS process_fixups(MULTI_SECTOR_HEADER* header, uint64_t length, unsigned int sector_size) {
-    uint64_t sectors;
-    uint16_t* seq;
-    uint8_t* ptr;
-
-    sectors = length / sector_size;
-
-    if (header->UpdateSequenceArraySize < sectors + 1)
-        return EFI_INVALID_PARAMETER;
-
-    seq = (uint16_t*)((uint8_t*)header + header->UpdateSequenceArrayOffset);
-
-    ptr = (uint8_t*)header + sector_size - sizeof(uint16_t);
-
-    for (unsigned int i = 0; i < sectors; i++) {
-        if (*(uint16_t*)ptr != seq[0])
-            return EFI_INVALID_PARAMETER;
-
-        *(uint16_t*)ptr = seq[i + 1];
-
-        ptr += sector_size;
-    }
 
     return EFI_SUCCESS;
 }
