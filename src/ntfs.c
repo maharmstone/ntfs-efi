@@ -145,11 +145,46 @@ static EFI_STATUS process_fixups(MULTI_SECTOR_HEADER* header, uint64_t length, u
 
 static EFI_STATUS read_from_mappings(volume* vol, LIST_ENTRY* mappings, uint64_t offset, uint8_t* buf,
                                      uint64_t size) {
-    systable->ConOut->OutputString(systable->ConOut, L"read_from_mappings\r\n");
+    EFI_STATUS Status;
+    uint32_t cluster_size = vol->boot_sector->BytesPerSector * vol->boot_sector->SectorsPerCluster;
+    uint64_t vcn = offset / cluster_size;
+    uint64_t last_vcn = sector_align(offset + size, cluster_size) / cluster_size;
+    LIST_ENTRY* le;
 
-    // FIXME
+    le = mappings->Flink;
+    while (le != mappings) {
+        mapping* m = _CR(le, mapping, list_entry);
 
-    return EFI_INVALID_PARAMETER;
+        if (m->vcn <= vcn && m->vcn + m->length >= last_vcn) {
+            uint64_t to_read, mapping_offset;
+
+            mapping_offset = offset - (m->vcn * cluster_size);
+            to_read = ((m->vcn + m->length) * cluster_size) - mapping_offset;
+
+            if (to_read > size)
+                to_read = size;
+
+            Status = vol->block->ReadBlocks(vol->block, vol->block->Media->MediaId,
+                                            ((m->lcn * cluster_size) + mapping_offset) / vol->block->Media->BlockSize,
+                                            to_read, buf);
+            if (EFI_ERROR(Status))
+                return Status;
+
+            if (to_read == size)
+                break;
+
+            offset += to_read;
+            buf += to_read;
+            size -= to_read;
+            vcn = offset / cluster_size;
+        }
+
+        // FIXME - sparse
+
+        le = le->Flink;
+    }
+
+    return EFI_SUCCESS;
 }
 
 static EFI_STATUS load_inode(inode* ino) {
