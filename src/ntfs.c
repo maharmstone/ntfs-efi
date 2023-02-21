@@ -12,6 +12,7 @@ typedef struct {
     EFI_HANDLE controller;
     EFI_BLOCK_IO_PROTOCOL* block;
     EFI_DISK_IO_PROTOCOL* disk_io;
+    uint64_t file_record_size;
 } volume;
 
 typedef struct {
@@ -168,6 +169,68 @@ static EFI_STATUS EFIAPI open_volume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* This, EFI_
     return EFI_SUCCESS;
 }
 
+static EFI_STATUS process_fixups(MULTI_SECTOR_HEADER* header, uint64_t length, unsigned int sector_size) {
+    uint64_t sectors;
+    uint16_t* seq;
+    uint8_t* ptr;
+
+    sectors = length / sector_size;
+
+    if (header->UpdateSequenceArraySize < sectors + 1)
+        return EFI_INVALID_PARAMETER;
+
+    seq = (uint16_t*)((uint8_t*)header + header->UpdateSequenceArrayOffset);
+
+    ptr = (uint8_t*)header + sector_size - sizeof(uint16_t);
+
+    for (unsigned int i = 0; i < sectors; i++) {
+        if (*(uint16_t*)ptr != seq[0])
+            return EFI_INVALID_PARAMETER;
+
+        *(uint16_t*)ptr = seq[i + 1];
+
+        ptr += sector_size;
+    }
+
+    return EFI_SUCCESS;
+}
+
+static EFI_STATUS read_mft(volume* vol) {
+    EFI_STATUS Status;
+    FILE_RECORD_SEGMENT_HEADER* mft;
+
+    Status = bs->AllocatePool(EfiBootServicesData, vol->file_record_size, (void**)&mft);
+    if (EFI_ERROR(Status))
+        return Status;
+
+    Status = vol->block->ReadBlocks(vol->block, vol->block->Media->MediaId,
+                                    (vol->boot_sector->MFT * vol->boot_sector->BytesPerSector * vol->boot_sector->SectorsPerCluster) / vol->block->Media->BlockSize,
+                                    vol->file_record_size, mft);
+    if (EFI_ERROR(Status)) {
+        bs->FreePool(mft);
+        return Status;
+    }
+
+    if (mft->MultiSectorHeader.Signature != NTFS_FILE_SIGNATURE) {
+        bs->FreePool(mft);
+        return EFI_INVALID_PARAMETER;
+    }
+
+    Status = process_fixups(&mft->MultiSectorHeader, vol->file_record_size,
+                            vol->boot_sector->BytesPerSector);
+    if (EFI_ERROR(Status)) {
+        bs->FreePool(mft);
+        return Status;
+    }
+
+    // FIXME
+    systable->ConOut->OutputString(systable->ConOut, L"FIXME - MFT\r\n");
+
+    bs->FreePool(mft);
+
+    return EFI_SUCCESS;
+}
+
 static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE ControllerHandle,
                                    EFI_DEVICE_PATH_PROTOCOL* RemainingDevicePath) {
     EFI_STATUS Status;
@@ -241,6 +304,25 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
     vol->proto.Revision = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_REVISION;
     vol->proto.OpenVolume = open_volume;
+    vol->boot_sector = sb;
+    vol->controller = ControllerHandle;
+    vol->block = block;
+    vol->disk_io = disk_io;
+
+    if (sb->ClustersPerMFTRecord < 0)
+        vol->file_record_size = 1ull << -sb->ClustersPerMFTRecord;
+    else
+        vol->file_record_size = (uint64_t)sb->BytesPerSector * (uint64_t)sb->SectorsPerCluster * (uint64_t)sb->ClustersPerMFTRecord;
+
+    Status = read_mft(vol);
+    if (EFI_ERROR(Status)) {
+        do_print_error("read_mft", Status);
+        bs->FreePool(sb);
+        bs->FreePool(vol);
+        bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
+        bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
+        return Status;
+    }
 
     // FIXME - quibble protocol
 
@@ -253,11 +335,6 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
         bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
         return Status;
     }
-
-    vol->boot_sector = sb;
-    vol->controller = ControllerHandle;
-    vol->block = block;
-    vol->disk_io = disk_io;
 
     return EFI_SUCCESS;
 }
