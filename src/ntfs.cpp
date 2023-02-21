@@ -280,7 +280,7 @@ static EFI_STATUS load_inode(inode* ino) {
     att = (ATTRIBUTE_RECORD_HEADER*)((uint8_t*)file + file->FirstAttributeOffset);
 
     while ((uint32_t)att->TypeCode != 0xffffffff) {
-        if (att->TypeCode == ntfs_attribute::STANDARD_INFORMATION && att->FormCode == RESIDENT_FORM) {
+        if (att->TypeCode == ntfs_attribute::STANDARD_INFORMATION && att->FormCode == NTFS_ATTRIBUTE_FORM::RESIDENT_FORM) {
             size_t to_copy = att->Form.Resident.ValueLength;
 
             if (to_copy > sizeof(STANDARD_INFORMATION))
@@ -288,7 +288,7 @@ static EFI_STATUS load_inode(inode* ino) {
 
             memcpy(&ino->standard_info, (uint8_t*)att + att->Form.Resident.ValueOffset,
                    to_copy);
-        } else if (att->TypeCode == ntfs_attribute::INDEX_ALLOCATION && att->FormCode == NONRESIDENT_FORM) {
+        } else if (att->TypeCode == ntfs_attribute::INDEX_ALLOCATION && att->FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
             static const char16_t i30[] = u"$I30";
 
             char16_t* name = (char16_t*)((uint8_t*)att + att->NameOffset);
@@ -462,7 +462,7 @@ static EFI_STATUS read_mft_data(volume* vol, ATTRIBUTE_RECORD_HEADER* att) {
     uint8_t* stream;
     uint64_t max_cluster;
 
-    if (att->FormCode != NONRESIDENT_FORM)
+    if (att->FormCode != NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM)
         return EFI_INVALID_PARAMETER;
 
     if (att->Flags & ATTRIBUTE_FLAG_ENCRYPTED)

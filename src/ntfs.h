@@ -19,7 +19,7 @@ enum class ntfs_attribute : uint32_t {
     LOGGED_UTILITY_STREAM = 0x100,
 };
 
-enum NTFS_ATTRIBUTE_FORM {
+enum class NTFS_ATTRIBUTE_FORM : uint8_t {
     RESIDENT_FORM = 0,
     NONRESIDENT_FORM = 1
 };
@@ -83,7 +83,7 @@ typedef struct _ATTRIBUTE_RECORD_HEADER {
     enum ntfs_attribute TypeCode;
     uint16_t RecordLength;
     uint16_t Unknown;
-    uint8_t FormCode;
+    enum NTFS_ATTRIBUTE_FORM FormCode;
     uint8_t NameLength;
     uint16_t NameOffset;
     uint16_t Flags;
