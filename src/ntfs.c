@@ -51,7 +51,9 @@ static EFI_STATUS drv_supported(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE Co
 
 static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FILE_HANDLE** NewHandle, CHAR16* FileName,
                                    UINT64 OpenMode, UINT64 Attributes) {
-    systable->ConOut->OutputString(systable->ConOut, L"file_open\r\n");
+    systable->ConOut->OutputString(systable->ConOut, L"file_open(");
+    systable->ConOut->OutputString(systable->ConOut, FileName);
+    systable->ConOut->OutputString(systable->ConOut, L")\r\n");
 
     // FIXME
 
