@@ -530,28 +530,28 @@ static EFI_STATUS EFIAPI open_volume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* This, EFI_
     return EFI_SUCCESS;
 }
 
-static EFI_STATUS read_mft_data(volume* vol, ATTRIBUTE_RECORD_HEADER* att) {
+static EFI_STATUS read_mft_data(volume* vol, const ATTRIBUTE_RECORD_HEADER& att) {
     EFI_STATUS Status;
     uint64_t next_vcn, current_lcn = 0, current_vcn;
     uint32_t cluster_size = vol->boot_sector->BytesPerSector * vol->boot_sector->SectorsPerCluster;
     uint8_t* stream;
     uint64_t max_cluster;
 
-    if (att->FormCode != NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM)
+    if (att.FormCode != NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM)
         return EFI_INVALID_PARAMETER;
 
-    if (att->Flags & ATTRIBUTE_FLAG_ENCRYPTED)
+    if (att.Flags & ATTRIBUTE_FLAG_ENCRYPTED)
         return EFI_INVALID_PARAMETER;
 
-    if (att->Flags & ATTRIBUTE_FLAG_COMPRESSION_MASK)
+    if (att.Flags & ATTRIBUTE_FLAG_COMPRESSION_MASK)
         return EFI_INVALID_PARAMETER;
 
-    next_vcn = att->Form.Nonresident.LowestVcn;
-    stream = (uint8_t*)att + att->Form.Nonresident.MappingPairsOffset;
+    next_vcn = att.Form.Nonresident.LowestVcn;
+    stream = (uint8_t*)&att + att.Form.Nonresident.MappingPairsOffset;
 
-    max_cluster = att->Form.Nonresident.ValidDataLength / cluster_size;
+    max_cluster = att.Form.Nonresident.ValidDataLength / cluster_size;
 
-    if (att->Form.Nonresident.ValidDataLength & (cluster_size - 1))
+    if (att.Form.Nonresident.ValidDataLength & (cluster_size - 1))
         max_cluster++;
 
     if (max_cluster == 0)
@@ -627,7 +627,6 @@ static EFI_STATUS read_mft_data(volume* vol, ATTRIBUTE_RECORD_HEADER* att) {
 static EFI_STATUS read_mft(volume* vol) {
     EFI_STATUS Status;
     FILE_RECORD_SEGMENT_HEADER* mft;
-    ATTRIBUTE_RECORD_HEADER* att;
 
     Status = bs->AllocatePool(EfiBootServicesData, vol->file_record_size, (void**)&mft);
     if (EFI_ERROR(Status))
@@ -655,25 +654,20 @@ static EFI_STATUS read_mft(volume* vol) {
 
     // read DATA mappings
 
-    att = (ATTRIBUTE_RECORD_HEADER*)((uint8_t*)mft + mft->FirstAttributeOffset);
+    Status = EFI_INVALID_PARAMETER;
 
-    while ((uint32_t)att->TypeCode != 0xffffffff) {
-        if (att->TypeCode == ntfs_attribute::DATA && att->NameLength == 0) {
+    loop_through_atts(mft, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view, u16string_view att_name) -> bool {
+        if (att.TypeCode == ntfs_attribute::DATA && att_name.empty()) {
             Status = read_mft_data(vol, att);
-            if (EFI_ERROR(Status)) {
-                bs->FreePool(mft);
-                return Status;
-            }
-
-            break;
+            return false;
         }
 
-        att = (ATTRIBUTE_RECORD_HEADER*)((uint8_t*)att + att->RecordLength);
-    }
+        return true;
+    });
 
     bs->FreePool(mft);
 
-    return EFI_SUCCESS;
+    return Status;
 }
 
 static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE ControllerHandle,
