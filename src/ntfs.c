@@ -29,6 +29,7 @@ typedef struct {
     uint64_t inode;
     volume* vol;
     bool inode_loaded;
+    STANDARD_INFO standard_info;
 } inode;
 
 static EFI_SYSTEM_TABLE* systable;
@@ -190,6 +191,7 @@ static EFI_STATUS read_from_mappings(volume* vol, LIST_ENTRY* mappings, uint64_t
 static EFI_STATUS load_inode(inode* ino) {
     EFI_STATUS Status;
     FILE_RECORD_SEGMENT_HEADER* file;
+    ATTRIBUTE_RECORD_HEADER* att;
 
     Status = bs->AllocatePool(EfiBootServicesData, ino->vol->file_record_size, (void**)&file);
     if (EFI_ERROR(Status))
@@ -202,6 +204,11 @@ static EFI_STATUS load_inode(inode* ino) {
         return Status;
     }
 
+    if (file->MultiSectorHeader.Signature != NTFS_FILE_SIGNATURE) {
+        bs->FreePool(file);
+        return EFI_INVALID_PARAMETER;
+    }
+
     Status = process_fixups(&file->MultiSectorHeader, ino->vol->file_record_size,
                             ino->vol->boot_sector->BytesPerSector);
 
@@ -210,8 +217,25 @@ static EFI_STATUS load_inode(inode* ino) {
         return Status;
     }
 
-    // FIXME - parse file
+    memset(&ino->standard_info, 0, sizeof(STANDARD_INFO));
+
     // FIXME - ATTRIBUTE_LIST
+
+    att = (ATTRIBUTE_RECORD_HEADER*)((uint8_t*)file + file->FirstAttributeOffset);
+
+    while (att->TypeCode != 0xffffffff) {
+        if (att->TypeCode == STANDARD_INFORMATION && att->FormCode == RESIDENT_FORM) {
+            size_t to_copy = att->Form.Resident.ValueLength;
+
+            if (to_copy > sizeof(STANDARD_INFO))
+                to_copy = sizeof(STANDARD_INFO);
+
+            memcpy(&ino->standard_info, (uint8_t*)att + att->Form.Resident.ValueOffset,
+                   to_copy);
+        }
+
+        att = (ATTRIBUTE_RECORD_HEADER*)((uint8_t*)att + att->RecordLength);
+    }
 
     ino->inode_loaded = true;
 
