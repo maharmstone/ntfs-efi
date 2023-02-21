@@ -108,7 +108,7 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 
     populate_file_handle(&ino->proto);
 
-    ino->inode = NTFS_ROOT_DIR_INODE;
+    ino->inode = inode_num;
     ino->vol = file->vol;
 
     *NewHandle = &ino->proto;
