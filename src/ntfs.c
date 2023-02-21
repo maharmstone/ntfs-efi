@@ -61,11 +61,11 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 }
 
 static EFI_STATUS EFIAPI file_close(struct _EFI_FILE_HANDLE* File) {
-    systable->ConOut->OutputString(systable->ConOut, L"file_close\r\n");
+    inode* ino = _CR(File, inode, proto);
 
-    // FIXME
+    bs->FreePool(ino);
 
-    return EFI_UNSUPPORTED;
+    return EFI_SUCCESS;
 }
 
 static EFI_STATUS EFIAPI file_delete(struct _EFI_FILE_HANDLE* File) {
