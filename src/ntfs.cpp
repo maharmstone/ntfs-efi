@@ -123,12 +123,38 @@ static EFI_STATUS EFIAPI file_delete(struct _EFI_FILE_HANDLE* File) {
     return EFI_UNSUPPORTED;
 }
 
-static EFI_STATUS EFIAPI file_read(struct _EFI_FILE_HANDLE* File, UINTN* BufferSize, VOID* Buffer) {
-    systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"file_read\r\n");
+static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
+    systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"read_dir\r\n");
 
     // FIXME
 
     return EFI_UNSUPPORTED;
+}
+
+static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
+    systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"read_file\r\n");
+
+    // FIXME
+
+    return EFI_UNSUPPORTED;
+}
+
+static EFI_STATUS EFIAPI file_read(struct _EFI_FILE_HANDLE* File, UINTN* BufferSize, VOID* Buffer) {
+    EFI_STATUS Status;
+    inode* ino = _CR(File, inode, proto);
+
+    if (!ino->inode_loaded) {
+        Status = load_inode(ino);
+        if (EFI_ERROR(Status)) {
+            do_print_error("load_inode", Status);
+            return Status;
+        }
+    }
+
+    if (ino->standard_info.FileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_DIRECTORY_MFT))
+        return read_dir(ino, BufferSize, Buffer);
+    else
+        return read_file(ino, BufferSize, Buffer);
 }
 
 static EFI_STATUS EFIAPI file_write(struct _EFI_FILE_HANDLE* File, UINTN* BufferSize, VOID* Buffer) {
