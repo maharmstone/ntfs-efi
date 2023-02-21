@@ -32,6 +32,7 @@ typedef struct {
     STANDARD_INFO standard_info;
     uint64_t size;
     uint64_t phys_size;
+    uint64_t position;
 } inode;
 
 static EFI_SYSTEM_TABLE* systable;
@@ -39,6 +40,7 @@ static EFI_BOOT_SERVICES* bs;
 static EFI_DRIVER_BINDING_PROTOCOL drvbind;
 
 static void populate_file_handle(EFI_FILE_PROTOCOL* h);
+static EFI_STATUS load_inode(inode* ino);
 
 static void do_print_error(const char* func, EFI_STATUS Status) {
     // FIXME
@@ -138,11 +140,30 @@ static EFI_STATUS EFIAPI file_write(struct _EFI_FILE_HANDLE* File, UINTN* Buffer
 }
 
 static EFI_STATUS EFIAPI file_set_position(struct _EFI_FILE_HANDLE* File, UINT64 Position) {
-    systable->ConOut->OutputString(systable->ConOut, L"file_set_position\r\n");
+    EFI_STATUS Status;
+    inode* ino = _CR(File, inode, proto);
 
-    // FIXME
+    if (!ino->inode_loaded) {
+        Status = load_inode(ino);
+        if (EFI_ERROR(Status)) {
+            do_print_error("load_inode", Status);
+            return Status;
+        }
+    }
 
-    return EFI_UNSUPPORTED;
+    if (ino->standard_info.FileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_DIRECTORY_MFT)) {
+        if (Position != 0)
+            return EFI_UNSUPPORTED;
+
+        ino->position = 0;
+    } else {
+        if (Position == 0xffffffffffffffff)
+            ino->position = ino->size;
+        else
+            ino->position = Position;
+    }
+
+    return EFI_SUCCESS;
 }
 
 static EFI_STATUS EFIAPI file_get_position(struct _EFI_FILE_HANDLE* File, UINT64* Position) {
