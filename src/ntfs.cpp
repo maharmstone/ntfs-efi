@@ -29,7 +29,7 @@ typedef struct {
     uint64_t inode;
     volume* vol;
     bool inode_loaded;
-    STANDARD_INFO standard_info;
+    STANDARD_INFORMATION standard_info;
     uint64_t size;
     uint64_t phys_size;
     uint64_t position;
@@ -273,22 +273,22 @@ static EFI_STATUS load_inode(inode* ino) {
         return Status;
     }
 
-    memset(&ino->standard_info, 0, sizeof(STANDARD_INFO));
+    memset(&ino->standard_info, 0, sizeof(STANDARD_INFORMATION));
 
     // FIXME - ATTRIBUTE_LIST
 
     att = (ATTRIBUTE_RECORD_HEADER*)((uint8_t*)file + file->FirstAttributeOffset);
 
-    while (att->TypeCode != 0xffffffff) {
-        if (att->TypeCode == STANDARD_INFORMATION && att->FormCode == RESIDENT_FORM) {
+    while ((uint32_t)att->TypeCode != 0xffffffff) {
+        if (att->TypeCode == ntfs_attribute::STANDARD_INFORMATION && att->FormCode == RESIDENT_FORM) {
             size_t to_copy = att->Form.Resident.ValueLength;
 
-            if (to_copy > sizeof(STANDARD_INFO))
-                to_copy = sizeof(STANDARD_INFO);
+            if (to_copy > sizeof(STANDARD_INFORMATION))
+                to_copy = sizeof(STANDARD_INFORMATION);
 
             memcpy(&ino->standard_info, (uint8_t*)att + att->Form.Resident.ValueOffset,
                    to_copy);
-        } else if (att->TypeCode == INDEX_ALLOCATION && att->FormCode == NONRESIDENT_FORM) {
+        } else if (att->TypeCode == ntfs_attribute::INDEX_ALLOCATION && att->FormCode == NONRESIDENT_FORM) {
             static const char16_t i30[] = u"$I30";
 
             char16_t* name = (char16_t*)((uint8_t*)att + att->NameOffset);
@@ -582,8 +582,8 @@ static EFI_STATUS read_mft(volume* vol) {
 
     att = (ATTRIBUTE_RECORD_HEADER*)((uint8_t*)mft + mft->FirstAttributeOffset);
 
-    while (att->TypeCode != 0xffffffff) {
-        if (att->TypeCode == DATA && att->NameLength == 0) {
+    while ((uint32_t)att->TypeCode != 0xffffffff) {
+        if (att->TypeCode == ntfs_attribute::DATA && att->NameLength == 0) {
             Status = read_mft_data(vol, att);
             if (EFI_ERROR(Status)) {
                 bs->FreePool(mft);
