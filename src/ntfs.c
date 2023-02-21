@@ -1,10 +1,18 @@
 #include <efi.h>
 #include <string.h>
+#include <stdbool.h>
 #include <uchar.h>
 #include "ntfs.h"
 
 #define UNUSED(x) (void)(x)
 #define sector_align(n, a) ((n)&((a)-1)?(((n)+(a))&~((a)-1)):(n))
+
+typedef struct {
+    LIST_ENTRY list_entry;
+    uint64_t lcn;
+    uint64_t vcn;
+    uint64_t length;
+} mapping;
 
 typedef struct {
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL proto;
@@ -13,6 +21,7 @@ typedef struct {
     EFI_BLOCK_IO_PROTOCOL* block;
     EFI_DISK_IO_PROTOCOL* disk_io;
     uint64_t file_record_size;
+    LIST_ENTRY mft_mappings;
 } volume;
 
 typedef struct {
@@ -195,9 +204,104 @@ static EFI_STATUS process_fixups(MULTI_SECTOR_HEADER* header, uint64_t length, u
     return EFI_SUCCESS;
 }
 
+static EFI_STATUS read_mft_data(volume* vol, ATTRIBUTE_RECORD_HEADER* att) {
+    EFI_STATUS Status;
+    uint64_t next_vcn, current_lcn = 0, current_vcn;
+    uint32_t cluster_size = vol->boot_sector->BytesPerSector * vol->boot_sector->SectorsPerCluster;
+    uint8_t* stream;
+    uint64_t max_cluster;
+
+    if (att->FormCode != NONRESIDENT_FORM)
+        return EFI_INVALID_PARAMETER;
+
+    if (att->Flags & ATTRIBUTE_FLAG_ENCRYPTED)
+        return EFI_INVALID_PARAMETER;
+
+    if (att->Flags & ATTRIBUTE_FLAG_COMPRESSION_MASK)
+        return EFI_INVALID_PARAMETER;
+
+    next_vcn = att->Form.Nonresident.LowestVcn;
+    stream = (uint8_t*)att + att->Form.Nonresident.MappingPairsOffset;
+
+    max_cluster = att->Form.Nonresident.ValidDataLength / cluster_size;
+
+    if (att->Form.Nonresident.ValidDataLength & (cluster_size - 1))
+        max_cluster++;
+
+    if (max_cluster == 0)
+        return EFI_SUCCESS;
+
+    while (true) {
+        uint64_t v, l;
+        int64_t v_val, l_val;
+        mapping* m;
+
+        current_vcn = next_vcn;
+
+        if (*stream == 0)
+            break;
+
+        v = *stream & 0xf;
+        l = *stream >> 4;
+
+        stream++;
+
+        if (v > 8)
+            return EFI_INVALID_PARAMETER;
+
+        if (l > 8)
+            return EFI_INVALID_PARAMETER;
+
+        // FIXME - do we need to make sure that int64_t pointers don't go past end of buffer?
+
+        v_val = *(int64_t*)stream;
+        v_val &= (1ull << (v * 8)) - 1;
+
+        if ((uint64_t)v_val & (1ull << ((v * 8) - 1))) // sign-extend if negative
+            v_val |= 0xffffffffffffffff & ~((1ull << (v * 8)) - 1);
+
+        stream += v;
+
+        next_vcn += v_val;
+
+        Status = bs->AllocatePool(EfiBootServicesData, sizeof(mapping), (void**)&m);
+        if (EFI_ERROR(Status))
+            return Status;
+
+        if (l != 0) {
+            l_val = *(int64_t*)stream;
+            l_val &= (1ull << (l * 8)) - 1;
+
+            if ((uint64_t)l_val & (1ull << ((l * 8) - 1))) // sign-extend if negative
+                l_val |= 0xffffffffffffffff & ~((1ull << (l * 8)) - 1);
+
+            stream += l;
+
+            current_lcn += l_val;
+
+            if (next_vcn > max_cluster)
+                next_vcn = max_cluster;
+
+            m->lcn = current_lcn;
+        } else
+            m->lcn = 0;
+
+        m->vcn = current_vcn;
+        m->length = next_vcn - current_vcn;
+
+        InsertTailList(&vol->mft_mappings, &m->list_entry);
+
+        if (next_vcn == max_cluster)
+            break;
+    }
+
+    return EFI_SUCCESS;
+}
+
 static EFI_STATUS read_mft(volume* vol) {
     EFI_STATUS Status;
     FILE_RECORD_SEGMENT_HEADER* mft;
+    ATTRIBUTE_RECORD_HEADER* att;
 
     Status = bs->AllocatePool(EfiBootServicesData, vol->file_record_size, (void**)&mft);
     if (EFI_ERROR(Status))
@@ -223,8 +327,23 @@ static EFI_STATUS read_mft(volume* vol) {
         return Status;
     }
 
-    // FIXME
-    systable->ConOut->OutputString(systable->ConOut, L"FIXME - MFT\r\n");
+    // read DATA mappings
+
+    att = (ATTRIBUTE_RECORD_HEADER*)((uint8_t*)mft + mft->FirstAttributeOffset);
+
+    while (att->TypeCode != 0xffffffff) {
+        if (att->TypeCode == DATA && att->NameLength == 0) {
+            Status = read_mft_data(vol, att);
+            if (EFI_ERROR(Status)) {
+                bs->FreePool(mft);
+                return Status;
+            }
+
+            break;
+        }
+
+        att = (ATTRIBUTE_RECORD_HEADER*)((uint8_t*)att + att->RecordLength);
+    }
 
     bs->FreePool(mft);
 
@@ -314,9 +433,18 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
     else
         vol->file_record_size = (uint64_t)sb->BytesPerSector * (uint64_t)sb->SectorsPerCluster * (uint64_t)sb->ClustersPerMFTRecord;
 
+    InitializeListHead(&vol->mft_mappings);
+
     Status = read_mft(vol);
     if (EFI_ERROR(Status)) {
         do_print_error("read_mft", Status);
+
+        while (!IsListEmpty(&vol->mft_mappings)) {
+            mapping* m = _CR(vol->mft_mappings.Flink, mapping, list_entry);
+            RemoveEntryList(&m->list_entry);
+            bs->FreePool(m);
+        }
+
         bs->FreePool(sb);
         bs->FreePool(vol);
         bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
@@ -329,6 +457,13 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
     Status = bs->InstallProtocolInterface(&ControllerHandle, &fs_guid, EFI_NATIVE_INTERFACE, &vol->proto);
     if (EFI_ERROR(Status)) {
         do_print_error("InstallProtocolInterface", Status);
+
+        while (!IsListEmpty(&vol->mft_mappings)) {
+            mapping* m = _CR(vol->mft_mappings.Flink, mapping, list_entry);
+            RemoveEntryList(&m->list_entry);
+            bs->FreePool(m);
+        }
+
         bs->FreePool(sb);
         bs->FreePool(vol);
         bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
