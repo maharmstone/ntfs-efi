@@ -27,6 +27,8 @@ struct volume {
 };
 
 struct inode {
+    ~inode();
+
     EFI_FILE_PROTOCOL proto;
     uint64_t inode;
     volume* vol;
@@ -35,6 +37,8 @@ struct inode {
     uint64_t size;
     uint64_t phys_size;
     uint64_t position;
+    LIST_ENTRY index_mappings;
+    uint8_t* index_root;
 };
 
 static EFI_SYSTEM_TABLE* systable;
@@ -116,9 +120,24 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
     return EFI_SUCCESS;
 }
 
+inode::~inode() {
+    if (!inode_loaded)
+        return;
+
+    if (index_root)
+        bs->FreePool(index_root);
+
+    while (!IsListEmpty(&index_mappings)) {
+        mapping* m = _CR(index_mappings.Flink, mapping, list_entry);
+        RemoveEntryList(&m->list_entry);
+        bs->FreePool(m);
+    }
+}
+
 static EFI_STATUS EFIAPI file_close(struct _EFI_FILE_HANDLE* File) {
     inode* ino = _CR(File, inode, proto);
 
+    ino->inode::~inode();
     bs->FreePool(ino);
 
     return EFI_SUCCESS;
@@ -318,9 +337,105 @@ static void loop_through_atts(const FILE_RECORD_SEGMENT_HEADER* file_record, inv
     }
 }
 
+static EFI_STATUS read_mappings(volume* vol, const ATTRIBUTE_RECORD_HEADER& att, LIST_ENTRY* mappings) {
+    EFI_STATUS Status;
+    uint64_t next_vcn, current_lcn = 0, current_vcn;
+    uint32_t cluster_size = vol->boot_sector->BytesPerSector * vol->boot_sector->SectorsPerCluster;
+    uint8_t* stream;
+    uint64_t max_cluster;
+
+    if (att.FormCode != NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM)
+        return EFI_INVALID_PARAMETER;
+
+    if (att.Flags & ATTRIBUTE_FLAG_ENCRYPTED)
+        return EFI_INVALID_PARAMETER;
+
+    if (att.Flags & ATTRIBUTE_FLAG_COMPRESSION_MASK)
+        return EFI_INVALID_PARAMETER;
+
+    next_vcn = att.Form.Nonresident.LowestVcn;
+    stream = (uint8_t*)&att + att.Form.Nonresident.MappingPairsOffset;
+
+    max_cluster = att.Form.Nonresident.ValidDataLength / cluster_size;
+
+    if (att.Form.Nonresident.ValidDataLength & (cluster_size - 1))
+        max_cluster++;
+
+    if (max_cluster == 0)
+        return EFI_SUCCESS;
+
+    while (true) {
+        uint64_t v, l;
+        int64_t v_val, l_val;
+        mapping* m;
+
+        current_vcn = next_vcn;
+
+        if (*stream == 0)
+            break;
+
+        v = *stream & 0xf;
+        l = *stream >> 4;
+
+        stream++;
+
+        if (v > 8)
+            return EFI_INVALID_PARAMETER;
+
+        if (l > 8)
+            return EFI_INVALID_PARAMETER;
+
+        // FIXME - do we need to make sure that int64_t pointers don't go past end of buffer?
+
+        v_val = *(int64_t*)stream;
+        v_val &= (1ull << (v * 8)) - 1;
+
+        if ((uint64_t)v_val & (1ull << ((v * 8) - 1))) // sign-extend if negative
+            v_val |= 0xffffffffffffffff & ~((1ull << (v * 8)) - 1);
+
+        stream += v;
+
+        next_vcn += v_val;
+
+        Status = bs->AllocatePool(EfiBootServicesData, sizeof(mapping), (void**)&m);
+        if (EFI_ERROR(Status))
+            return Status;
+
+        if (l != 0) {
+            l_val = *(int64_t*)stream;
+            l_val &= (1ull << (l * 8)) - 1;
+
+            if ((uint64_t)l_val & (1ull << ((l * 8) - 1))) // sign-extend if negative
+                l_val |= 0xffffffffffffffff & ~((1ull << (l * 8)) - 1);
+
+            stream += l;
+
+            current_lcn += l_val;
+
+            if (next_vcn > max_cluster)
+                next_vcn = max_cluster;
+
+            m->lcn = current_lcn;
+        } else
+            m->lcn = 0;
+
+        m->vcn = current_vcn;
+        m->length = next_vcn - current_vcn;
+
+        InsertTailList(mappings, &m->list_entry);
+
+        if (next_vcn == max_cluster)
+            break;
+    }
+
+    return EFI_SUCCESS;
+}
+
 static EFI_STATUS load_inode(inode* ino) {
     EFI_STATUS Status;
     FILE_RECORD_SEGMENT_HEADER* file;
+
+    InitializeListHead(&ino->index_mappings);
 
     Status = bs->AllocatePool(EfiBootServicesData, ino->vol->file_record_size, (void**)&file);
     if (EFI_ERROR(Status))
@@ -348,6 +463,8 @@ static EFI_STATUS load_inode(inode* ino) {
 
     memset(&ino->standard_info, 0, sizeof(STANDARD_INFORMATION));
 
+    Status = EFI_SUCCESS;
+
     loop_through_atts(file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view res_data, u16string_view att_name) -> bool {
         switch (att.TypeCode) {
             case ntfs_attribute::STANDARD_INFORMATION:
@@ -362,11 +479,23 @@ static EFI_STATUS load_inode(inode* ino) {
             break;
 
             case ntfs_attribute::INDEX_ALLOCATION:
-                if (att.FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
-                    if (att_name == u"$I30") {
-                        ino->size = att.Form.Nonresident.FileSize;
-                        ino->phys_size = att.Form.Nonresident.AllocatedLength;
-                    }
+                if (att_name == u"$I30" && att.FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
+                    ino->size = att.Form.Nonresident.FileSize;
+                    ino->phys_size = att.Form.Nonresident.AllocatedLength;
+
+                    Status = read_mappings(ino->vol, att, &ino->index_mappings);
+                    if (EFI_ERROR(Status))
+                        return false;
+                }
+            break;
+
+            case ntfs_attribute::INDEX_ROOT:
+                if (att_name == u"$I30" && att.FormCode == NTFS_ATTRIBUTE_FORM::RESIDENT_FORM && !res_data.empty() && !ino->index_root) {
+                    Status = bs->AllocatePool(EfiBootServicesData, res_data.size(), (void**)&ino->index_root);
+                    if (EFI_ERROR(Status))
+                        return false;
+
+                    memcpy(ino->index_root, res_data.data(), res_data.size());
                 }
             break;
 
@@ -376,6 +505,16 @@ static EFI_STATUS load_inode(inode* ino) {
 
         return true;
     });
+
+    if (EFI_ERROR(Status)) {
+        if (ino->index_root) {
+            bs->FreePool(ino->index_root);
+            ino->index_root = nullptr;
+        }
+
+        bs->FreePool(file);
+        return Status;
+    }
 
     ino->inode_loaded = true;
 
@@ -530,100 +669,6 @@ static EFI_STATUS EFIAPI open_volume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* This, EFI_
     return EFI_SUCCESS;
 }
 
-static EFI_STATUS read_mft_data(volume* vol, const ATTRIBUTE_RECORD_HEADER& att) {
-    EFI_STATUS Status;
-    uint64_t next_vcn, current_lcn = 0, current_vcn;
-    uint32_t cluster_size = vol->boot_sector->BytesPerSector * vol->boot_sector->SectorsPerCluster;
-    uint8_t* stream;
-    uint64_t max_cluster;
-
-    if (att.FormCode != NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM)
-        return EFI_INVALID_PARAMETER;
-
-    if (att.Flags & ATTRIBUTE_FLAG_ENCRYPTED)
-        return EFI_INVALID_PARAMETER;
-
-    if (att.Flags & ATTRIBUTE_FLAG_COMPRESSION_MASK)
-        return EFI_INVALID_PARAMETER;
-
-    next_vcn = att.Form.Nonresident.LowestVcn;
-    stream = (uint8_t*)&att + att.Form.Nonresident.MappingPairsOffset;
-
-    max_cluster = att.Form.Nonresident.ValidDataLength / cluster_size;
-
-    if (att.Form.Nonresident.ValidDataLength & (cluster_size - 1))
-        max_cluster++;
-
-    if (max_cluster == 0)
-        return EFI_SUCCESS;
-
-    while (true) {
-        uint64_t v, l;
-        int64_t v_val, l_val;
-        mapping* m;
-
-        current_vcn = next_vcn;
-
-        if (*stream == 0)
-            break;
-
-        v = *stream & 0xf;
-        l = *stream >> 4;
-
-        stream++;
-
-        if (v > 8)
-            return EFI_INVALID_PARAMETER;
-
-        if (l > 8)
-            return EFI_INVALID_PARAMETER;
-
-        // FIXME - do we need to make sure that int64_t pointers don't go past end of buffer?
-
-        v_val = *(int64_t*)stream;
-        v_val &= (1ull << (v * 8)) - 1;
-
-        if ((uint64_t)v_val & (1ull << ((v * 8) - 1))) // sign-extend if negative
-            v_val |= 0xffffffffffffffff & ~((1ull << (v * 8)) - 1);
-
-        stream += v;
-
-        next_vcn += v_val;
-
-        Status = bs->AllocatePool(EfiBootServicesData, sizeof(mapping), (void**)&m);
-        if (EFI_ERROR(Status))
-            return Status;
-
-        if (l != 0) {
-            l_val = *(int64_t*)stream;
-            l_val &= (1ull << (l * 8)) - 1;
-
-            if ((uint64_t)l_val & (1ull << ((l * 8) - 1))) // sign-extend if negative
-                l_val |= 0xffffffffffffffff & ~((1ull << (l * 8)) - 1);
-
-            stream += l;
-
-            current_lcn += l_val;
-
-            if (next_vcn > max_cluster)
-                next_vcn = max_cluster;
-
-            m->lcn = current_lcn;
-        } else
-            m->lcn = 0;
-
-        m->vcn = current_vcn;
-        m->length = next_vcn - current_vcn;
-
-        InsertTailList(&vol->mft_mappings, &m->list_entry);
-
-        if (next_vcn == max_cluster)
-            break;
-    }
-
-    return EFI_SUCCESS;
-}
-
 static EFI_STATUS read_mft(volume* vol) {
     EFI_STATUS Status;
     FILE_RECORD_SEGMENT_HEADER* mft;
@@ -658,7 +703,7 @@ static EFI_STATUS read_mft(volume* vol) {
 
     loop_through_atts(mft, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view, u16string_view att_name) -> bool {
         if (att.TypeCode == ntfs_attribute::DATA && att_name.empty()) {
-            Status = read_mft_data(vol, att);
+            Status = read_mappings(vol, att, &vol->mft_mappings);
             return false;
         }
 
