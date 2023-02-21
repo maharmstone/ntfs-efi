@@ -7,14 +7,14 @@
 #define UNUSED(x) (void)(x)
 #define sector_align(n, a) ((n)&((a)-1)?(((n)+(a))&~((a)-1)):(n))
 
-typedef struct {
+struct mapping {
     LIST_ENTRY list_entry;
     uint64_t lcn;
     uint64_t vcn;
     uint64_t length;
-} mapping;
+};
 
-typedef struct {
+struct volume {
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL proto;
     NTFS_BOOT_SECTOR* boot_sector;
     EFI_HANDLE controller;
@@ -22,9 +22,9 @@ typedef struct {
     EFI_DISK_IO_PROTOCOL* disk_io;
     uint64_t file_record_size;
     LIST_ENTRY mft_mappings;
-} volume;
+};
 
-typedef struct {
+struct inode {
     EFI_FILE_PROTOCOL proto;
     uint64_t inode;
     volume* vol;
@@ -33,7 +33,7 @@ typedef struct {
     uint64_t size;
     uint64_t phys_size;
     uint64_t position;
-} inode;
+};
 
 static EFI_SYSTEM_TABLE* systable;
 static EFI_BOOT_SERVICES* bs;

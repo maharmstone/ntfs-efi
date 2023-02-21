@@ -26,7 +26,7 @@ enum class NTFS_ATTRIBUTE_FORM : uint8_t {
 
 #pragma pack(push,1)
 
-typedef struct {
+struct NTFS_BOOT_SECTOR {
     uint8_t Jmp[3];
     uint8_t FsName[8];
     uint16_t BytesPerSector;
@@ -49,24 +49,24 @@ typedef struct {
     uint8_t Padding2[3];
     uint64_t SerialNumber;
     uint32_t Checksum;
-} NTFS_BOOT_SECTOR;
+};
 
 // https://docs.microsoft.com/en-us/windows/win32/devnotes/multi-sector-header
-typedef struct {
+struct MULTI_SECTOR_HEADER {
     uint32_t Signature;
     uint16_t UpdateSequenceArrayOffset;
     uint16_t UpdateSequenceArraySize;
-} MULTI_SECTOR_HEADER;
+};
 
 // https://docs.microsoft.com/en-us/windows/win32/devnotes/mft-segment-reference
-typedef struct {
+struct MFT_SEGMENT_REFERENCE {
     uint64_t SegmentNumber : 48;
     uint64_t SequenceNumber : 16;
-} MFT_SEGMENT_REFERENCE;
+};
 
 // based on https://docs.microsoft.com/en-us/windows/win32/devnotes/file-record-segment-header and
 // http://www.cse.scu.edu/~tschwarz/coen252_07Fall/Lectures/NTFS.html
-typedef struct {
+struct FILE_RECORD_SEGMENT_HEADER {
     MULTI_SECTOR_HEADER MultiSectorHeader;
     uint64_t LogFileSequenceNumber;
     uint16_t SequenceNumber;
@@ -77,9 +77,9 @@ typedef struct {
     uint32_t EntryAllocatedSize;
     MFT_SEGMENT_REFERENCE BaseFileRecordSegment;
     uint16_t NextAttributeID;
-} FILE_RECORD_SEGMENT_HEADER;
+};
 
-typedef struct _ATTRIBUTE_RECORD_HEADER {
+struct ATTRIBUTE_RECORD_HEADER {
     enum ntfs_attribute TypeCode;
     uint16_t RecordLength;
     uint16_t Unknown;
@@ -106,11 +106,11 @@ typedef struct _ATTRIBUTE_RECORD_HEADER {
             uint64_t TotalAllocated;
         } Nonresident;
     } Form;
-} ATTRIBUTE_RECORD_HEADER;
+};
 
 // https://flatcap.org/linux-ntfs/ntfs/attributes/standard_information.html
 
-typedef struct {
+struct STANDARD_INFORMATION {
     int64_t CreationTime;
     int64_t LastAccessTime;
     int64_t LastWriteTime;
@@ -123,7 +123,7 @@ typedef struct {
     uint32_t SecurityId;
     uint64_t QuotaCharged;
     uint64_t USN;
-} STANDARD_INFORMATION;
+};
 
 #pragma pack(pop)
 
