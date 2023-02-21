@@ -30,6 +30,8 @@ typedef struct {
     volume* vol;
     bool inode_loaded;
     STANDARD_INFO standard_info;
+    uint64_t size;
+    uint64_t phys_size;
 } inode;
 
 static EFI_SYSTEM_TABLE* systable;
@@ -232,6 +234,16 @@ static EFI_STATUS load_inode(inode* ino) {
 
             memcpy(&ino->standard_info, (uint8_t*)att + att->Form.Resident.ValueOffset,
                    to_copy);
+        } else if (att->TypeCode == INDEX_ALLOCATION && att->FormCode == NONRESIDENT_FORM) {
+            static const char16_t i30[] = u"$I30";
+
+            char16_t* name = (char16_t*)((uint8_t*)att + att->NameOffset);
+
+            if (att->NameLength == (sizeof(i30) / sizeof(char16_t)) - 1 &&
+                !memcmp(name, i30, sizeof(i30) - sizeof(char16_t))) {
+                ino->size = att->Form.Nonresident.FileSize;
+                ino->phys_size = att->Form.Nonresident.AllocatedLength;
+            }
         }
 
         att = (ATTRIBUTE_RECORD_HEADER*)((uint8_t*)att + att->RecordLength);
@@ -292,8 +304,8 @@ static EFI_STATUS get_inode_file_info(inode* ino, UINTN* BufferSize, VOID* Buffe
     }
 
     info->Size = size;
-    info->FileSize = 0; // FIXME
-    info->PhysicalSize = 0; // FIXME
+    info->FileSize = ino->size;
+    info->PhysicalSize = ino->phys_size;
     win_time_to_efi(0, &info->CreateTime); // FIXME
     win_time_to_efi(0, &info->LastAccessTime); // FIXME
     win_time_to_efi(0, &info->ModificationTime); // FIXME
