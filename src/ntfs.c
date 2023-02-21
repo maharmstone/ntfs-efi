@@ -299,11 +299,20 @@ static EFI_STATUS get_inode_file_info(inode* ino, UINTN* BufferSize, VOID* Buffe
     win_time_to_efi(0, &info->ModificationTime); // FIXME
     info->Attribute = 0;
 
-    info->Attribute |= EFI_FILE_DIRECTORY; // FIXME
+    if (ino->standard_info.FileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_DIRECTORY_MFT))
+        info->Attribute |= EFI_FILE_DIRECTORY;
 
-    // FIXME - EFI_FILE_HIDDEN
-    // FIXME - EFI_FILE_SYSTEM
-    // FIXME - EFI_FILE_ARCHIVE
+    if (ino->standard_info.FileAttributes & FILE_ATTRIBUTE_READONLY)
+        info->Attribute |= EFI_FILE_READ_ONLY;
+
+    if (ino->standard_info.FileAttributes & FILE_ATTRIBUTE_HIDDEN)
+        info->Attribute |= EFI_FILE_HIDDEN;
+
+    if (ino->standard_info.FileAttributes & FILE_ATTRIBUTE_SYSTEM)
+        info->Attribute |= EFI_FILE_SYSTEM;
+
+    if (ino->standard_info.FileAttributes & EFI_FILE_ARCHIVE)
+        info->Attribute |= EFI_FILE_ARCHIVE;
 
 //     if (ino->name)
 //         memcpy(info->FileName, &ino->name[bs + 1], (wcslen(ino->name) - bs) * sizeof(WCHAR));
