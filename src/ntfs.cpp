@@ -84,9 +84,9 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
     else {
         // FIXME
 
-        systable->ConOut->OutputString(systable->ConOut, L"file_open(");
+        systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"file_open(");
         systable->ConOut->OutputString(systable->ConOut, FileName);
-        systable->ConOut->OutputString(systable->ConOut, L")\r\n");
+        systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L")\r\n");
 
         return EFI_UNSUPPORTED;
     }
@@ -124,7 +124,7 @@ static EFI_STATUS EFIAPI file_delete(struct _EFI_FILE_HANDLE* File) {
 }
 
 static EFI_STATUS EFIAPI file_read(struct _EFI_FILE_HANDLE* File, UINTN* BufferSize, VOID* Buffer) {
-    systable->ConOut->OutputString(systable->ConOut, L"file_read\r\n");
+    systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"file_read\r\n");
 
     // FIXME
 
@@ -167,7 +167,7 @@ static EFI_STATUS EFIAPI file_set_position(struct _EFI_FILE_HANDLE* File, UINT64
 }
 
 static EFI_STATUS EFIAPI file_get_position(struct _EFI_FILE_HANDLE* File, UINT64* Position) {
-    systable->ConOut->OutputString(systable->ConOut, L"file_get_position\r\n");
+    systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"file_get_position\r\n");
 
     // FIXME
 
@@ -727,12 +727,13 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
 static EFI_STATUS EFIAPI drv_stop(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE ControllerHandle,
                                   UINTN NumberOfChildren, EFI_HANDLE* ChildHandleBuffer) {
-    systable->ConOut->OutputString(systable->ConOut, L"drv_stop\r\n");
+    systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"drv_stop\r\n");
     // FIXME
 
     return EFI_INVALID_PARAMETER;
 }
 
+extern "C"
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
     EFI_STATUS Status;
     EFI_GUID guid = EFI_DRIVER_BINDING_PROTOCOL_GUID;

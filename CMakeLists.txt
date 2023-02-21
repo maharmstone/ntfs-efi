@@ -23,8 +23,8 @@ elseif (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "X86")
     include_directories(/usr/include/efi/ia32)
 endif()
 
-set(SRC_FILES src/ntfs.c
-    src/misc.c
+set(SRC_FILES src/ntfs.cpp
+    src/misc.cpp
 )
 
 add_executable(ntfs ${SRC_FILES})
@@ -36,7 +36,6 @@ if(${CMAKE_C_COMPILER_ID} STREQUAL "GNU" OR ${CMAKE_C_COMPILER_ID} STREQUAL "Cla
     target_compile_options(ntfs PRIVATE "-fno-stack-protector")
     target_compile_options(ntfs PRIVATE "-fno-stack-check")
     target_compile_options(ntfs PRIVATE "-mno-stack-arg-probe")
-    target_compile_options(ntfs PRIVATE "-Werror-implicit-function-declaration")
 
     target_link_options(ntfs PRIVATE "-nostartfiles")
     target_link_options(ntfs PRIVATE "-shared")

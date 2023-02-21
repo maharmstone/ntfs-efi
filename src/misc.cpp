@@ -1,6 +1,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+extern "C"
 void* memset(void* s, int c, size_t n) {
     void* orig_s = s;
 
@@ -50,6 +51,7 @@ void* memset(void* s, int c, size_t n) {
     return orig_s;
 }
 
+extern "C"
 int memcmp(const void* s1, const void* s2, size_t n) {
 #if __INTPTR_WIDTH__ == 64
     while (n > sizeof(uint64_t)) {
@@ -92,6 +94,7 @@ int memcmp(const void* s1, const void* s2, size_t n) {
     return 0;
 }
 
+extern "C"
 void memcpy(void* dest, const void* src, size_t n) {
 #if __INTPTR_WIDTH__ == 64
     while (n >= sizeof(uint64_t)) {
