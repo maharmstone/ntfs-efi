@@ -1,11 +1,13 @@
 #include <efi.h>
 #include <string.h>
-#include <stdbool.h>
+#include <string_view>
 #include <uchar.h>
 #include "ntfs.h"
 
 #define UNUSED(x) (void)(x)
 #define sector_align(n, a) ((n)&((a)-1)?(((n)+(a))&~((a)-1)):(n))
+
+using namespace std;
 
 struct mapping {
     LIST_ENTRY list_entry;
@@ -270,6 +272,36 @@ static EFI_STATUS read_from_mappings(volume* vol, LIST_ENTRY* mappings, uint64_t
     return EFI_SUCCESS;
 }
 
+static void loop_through_atts(const FILE_RECORD_SEGMENT_HEADER* file_record, invocable<const ATTRIBUTE_RECORD_HEADER&, string_view, u16string_view> auto func) {
+    auto att = reinterpret_cast<const ATTRIBUTE_RECORD_HEADER*>((uint8_t*)file_record + file_record->FirstAttributeOffset);
+    size_t offset = file_record->FirstAttributeOffset;
+
+    // FIXME - ATTRIBUTE_LIST
+
+    att = reinterpret_cast<const ATTRIBUTE_RECORD_HEADER*>((uint8_t*)file_record + file_record->FirstAttributeOffset);
+    offset = file_record->FirstAttributeOffset;
+
+    while (true) {
+        if (att->TypeCode == (enum ntfs_attribute)0xffffffff || att->RecordLength == 0)
+            break;
+
+        string_view data;
+        u16string_view name;
+
+        if (att->FormCode == NTFS_ATTRIBUTE_FORM::RESIDENT_FORM)
+            data = string_view((const char*)file_record + offset + att->Form.Resident.ValueOffset, att->Form.Resident.ValueLength);
+
+        if (att->NameLength != 0)
+            name = u16string_view((char16_t*)((uint8_t*)file_record + offset + att->NameOffset), att->NameLength);
+
+        if (!func(*att, data, name))
+            return;
+
+        offset += att->RecordLength;
+        att = reinterpret_cast<const ATTRIBUTE_RECORD_HEADER*>((uint8_t*)att + att->RecordLength);
+    }
+}
+
 static EFI_STATUS load_inode(inode* ino) {
     EFI_STATUS Status;
     FILE_RECORD_SEGMENT_HEADER* file;
@@ -301,33 +333,34 @@ static EFI_STATUS load_inode(inode* ino) {
 
     memset(&ino->standard_info, 0, sizeof(STANDARD_INFORMATION));
 
-    // FIXME - ATTRIBUTE_LIST
+    loop_through_atts(file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view res_data, u16string_view att_name) -> bool {
+        switch (att.TypeCode) {
+            case ntfs_attribute::STANDARD_INFORMATION:
+                if (att.FormCode == NTFS_ATTRIBUTE_FORM::RESIDENT_FORM) {
+                    size_t to_copy = res_data.size();
 
-    att = (ATTRIBUTE_RECORD_HEADER*)((uint8_t*)file + file->FirstAttributeOffset);
+                    if (to_copy > sizeof(STANDARD_INFORMATION))
+                        to_copy = sizeof(STANDARD_INFORMATION);
 
-    while ((uint32_t)att->TypeCode != 0xffffffff) {
-        if (att->TypeCode == ntfs_attribute::STANDARD_INFORMATION && att->FormCode == NTFS_ATTRIBUTE_FORM::RESIDENT_FORM) {
-            size_t to_copy = att->Form.Resident.ValueLength;
+                    memcpy(&ino->standard_info, res_data.data(), to_copy);
+                }
+            break;
 
-            if (to_copy > sizeof(STANDARD_INFORMATION))
-                to_copy = sizeof(STANDARD_INFORMATION);
+            case ntfs_attribute::INDEX_ALLOCATION:
+                if (att.FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
+                    if (att_name == u"$I30") {
+                        ino->size = att.Form.Nonresident.FileSize;
+                        ino->phys_size = att.Form.Nonresident.AllocatedLength;
+                    }
+                }
+            break;
 
-            memcpy(&ino->standard_info, (uint8_t*)att + att->Form.Resident.ValueOffset,
-                   to_copy);
-        } else if (att->TypeCode == ntfs_attribute::INDEX_ALLOCATION && att->FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
-            static const char16_t i30[] = u"$I30";
-
-            char16_t* name = (char16_t*)((uint8_t*)att + att->NameOffset);
-
-            if (att->NameLength == (sizeof(i30) / sizeof(char16_t)) - 1 &&
-                !memcmp(name, i30, sizeof(i30) - sizeof(char16_t))) {
-                ino->size = att->Form.Nonresident.FileSize;
-                ino->phys_size = att->Form.Nonresident.AllocatedLength;
-            }
+            default:
+                break;
         }
 
-        att = (ATTRIBUTE_RECORD_HEADER*)((uint8_t*)att + att->RecordLength);
-    }
+        return true;
+    });
 
     ino->inode_loaded = true;
 

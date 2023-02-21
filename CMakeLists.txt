@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.14)
 
 project(ntfs-uefi)
 
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 if(MSVC)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /ENTRY:efi_main")
     add_compile_options("/GS-")
@@ -55,3 +58,9 @@ elseif(MSVC)
     target_link_options(ntfs PRIVATE "/SUBSYSTEM:EFI_BOOT_SERVICE_DRIVER")
     target_compile_options(ntfs PRIVATE "/Oi-")
 endif()
+
+target_compile_options(ntfs PRIVATE
+     $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>:
+          -Wall -Wextra -Wno-address-of-packed-member -Werror=pointer-arith -fno-exceptions>
+     $<$<CXX_COMPILER_ID:MSVC>:
+          /W4 /Oi->)
