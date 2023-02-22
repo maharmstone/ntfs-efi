@@ -38,7 +38,7 @@ struct inode {
     uint64_t phys_size;
     uint64_t position;
     LIST_ENTRY index_mappings;
-    uint8_t* index_root;
+    index_root* index_root;
 };
 
 static EFI_SYSTEM_TABLE* systable;
@@ -149,14 +149,151 @@ static EFI_STATUS EFIAPI file_delete(struct _EFI_FILE_HANDLE* File) {
     return EFI_UNSUPPORTED;
 }
 
+static EFI_STATUS read_from_mappings(volume* vol, LIST_ENTRY* mappings, uint64_t offset, uint8_t* buf,
+                                     uint64_t size) {
+    EFI_STATUS Status;
+    uint32_t cluster_size = vol->boot_sector->BytesPerSector * vol->boot_sector->SectorsPerCluster;
+    uint64_t vcn = offset / cluster_size;
+    uint64_t last_vcn = sector_align(offset + size, cluster_size) / cluster_size;
+    LIST_ENTRY* le;
+
+    le = mappings->Flink;
+    while (le != mappings) {
+        mapping* m = _CR(le, mapping, list_entry);
+
+        if (m->vcn <= vcn && m->vcn + m->length >= last_vcn) {
+            uint64_t to_read, mapping_offset;
+
+            mapping_offset = offset - (m->vcn * cluster_size);
+            to_read = ((m->vcn + m->length) * cluster_size) - mapping_offset;
+
+            if (to_read > size)
+                to_read = size;
+
+            Status = vol->block->ReadBlocks(vol->block, vol->block->Media->MediaId,
+                                            ((m->lcn * cluster_size) + mapping_offset) / vol->block->Media->BlockSize,
+                                            to_read, buf);
+            if (EFI_ERROR(Status))
+                return Status;
+
+            if (to_read == size)
+                break;
+
+            offset += to_read;
+            buf += to_read;
+            size -= to_read;
+            vcn = offset / cluster_size;
+        }
+
+        // FIXME - sparse
+
+        le = le->Flink;
+    }
+
+    return EFI_SUCCESS;
+}
+
+static EFI_STATUS process_fixups(MULTI_SECTOR_HEADER* header, uint64_t length, unsigned int sector_size) {
+    uint64_t sectors;
+    uint16_t* seq;
+    uint8_t* ptr;
+
+    sectors = length / sector_size;
+
+    if (header->UpdateSequenceArraySize < sectors + 1)
+        return EFI_INVALID_PARAMETER;
+
+    seq = (uint16_t*)((uint8_t*)header + header->UpdateSequenceArrayOffset);
+
+    ptr = (uint8_t*)header + sector_size - sizeof(uint16_t);
+
+    for (unsigned int i = 0; i < sectors; i++) {
+        if (*(uint16_t*)ptr != seq[0])
+            return EFI_INVALID_PARAMETER;
+
+        *(uint16_t*)ptr = seq[i + 1];
+
+        ptr += sector_size;
+    }
+
+    return EFI_SUCCESS;
+}
+
+static EFI_STATUS walk_btree(const index_root& ir, LIST_ENTRY* mappings, const index_node_header& inh, volume* vol,
+                             const invocable<const index_entry&, string_view> auto& func, unsigned int level) {
+    EFI_STATUS Status;
+
+    auto ent = reinterpret_cast<const index_entry*>((uint8_t*)&inh + inh.first_entry);
+
+    do {
+        if (ent->flags & INDEX_ENTRY_SUBNODE) {
+            uint8_t* data;
+            uint64_t vcn = ((MFT_SEGMENT_REFERENCE*)((uint8_t*)ent + ent->entry_length - sizeof(uint64_t)))->SegmentNumber;
+
+            if (ir.bytes_per_index_record < vol->boot_sector->BytesPerSector * vol->boot_sector->SectorsPerCluster)
+                vcn *= vol->boot_sector->BytesPerSector;
+            else
+                vcn *= (uint64_t)vol->boot_sector->BytesPerSector * (uint64_t)vol->boot_sector->SectorsPerCluster;
+
+            Status = bs->AllocatePool(EfiBootServicesData, ir.bytes_per_index_record, (void**)&data);
+            if (EFI_ERROR(Status))
+                return Status;
+
+            Status = read_from_mappings(vol, mappings, vcn, data, ir.bytes_per_index_record);
+            if (EFI_ERROR(Status)) {
+                bs->FreePool(data);
+                return Status;
+            }
+
+            auto rec = reinterpret_cast<index_record*>(data);
+
+            if (rec->MultiSectorHeader.Signature != INDEX_RECORD_MAGIC) {
+                bs->FreePool(data);
+                return EFI_INVALID_PARAMETER;
+            }
+
+            process_fixups(&rec->MultiSectorHeader, ir.bytes_per_index_record, vol->boot_sector->BytesPerSector);
+
+            Status = walk_btree(ir, mappings, rec->header, vol, func, level + 1);
+
+            bs->FreePool(data);
+
+            if (EFI_ERROR(Status))
+                return Status;
+        } else
+            func(*ent, string_view((const char*)ent + sizeof(index_entry), ent->stream_length));
+
+        if (ent->flags & INDEX_ENTRY_LAST)
+            break;
+
+        ent = reinterpret_cast<const index_entry*>((uint8_t*)ent + ent->entry_length);
+    } while (true);
+
+    return EFI_SUCCESS;
+}
+
 static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
-    UNUSED(ino);
+    EFI_STATUS Status;
+
     UNUSED(BufferSize);
     UNUSED(Buffer);
 
+    if (!ino->inode_loaded) {
+        Status = load_inode(ino);
+        if (EFI_ERROR(Status)) {
+            do_print_error("load_inode", Status);
+            return Status;
+        }
+    }
+
     systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"read_dir\r\n");
 
-    // FIXME
+    Status = walk_btree(*ino->index_root, &ino->index_mappings, ino->index_root->node_header, ino->vol, [](const index_entry&, string_view) {
+        systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"entry\r\n");
+    }, 0);
+
+    if (EFI_ERROR(Status))
+        return Status;
 
     return EFI_UNSUPPORTED;
 }
@@ -235,76 +372,6 @@ static EFI_STATUS EFIAPI file_get_position(struct _EFI_FILE_HANDLE* File, UINT64
     // FIXME
 
     return EFI_UNSUPPORTED;
-}
-
-static EFI_STATUS process_fixups(MULTI_SECTOR_HEADER* header, uint64_t length, unsigned int sector_size) {
-    uint64_t sectors;
-    uint16_t* seq;
-    uint8_t* ptr;
-
-    sectors = length / sector_size;
-
-    if (header->UpdateSequenceArraySize < sectors + 1)
-        return EFI_INVALID_PARAMETER;
-
-    seq = (uint16_t*)((uint8_t*)header + header->UpdateSequenceArrayOffset);
-
-    ptr = (uint8_t*)header + sector_size - sizeof(uint16_t);
-
-    for (unsigned int i = 0; i < sectors; i++) {
-        if (*(uint16_t*)ptr != seq[0])
-            return EFI_INVALID_PARAMETER;
-
-        *(uint16_t*)ptr = seq[i + 1];
-
-        ptr += sector_size;
-    }
-
-    return EFI_SUCCESS;
-}
-
-static EFI_STATUS read_from_mappings(volume* vol, LIST_ENTRY* mappings, uint64_t offset, uint8_t* buf,
-                                     uint64_t size) {
-    EFI_STATUS Status;
-    uint32_t cluster_size = vol->boot_sector->BytesPerSector * vol->boot_sector->SectorsPerCluster;
-    uint64_t vcn = offset / cluster_size;
-    uint64_t last_vcn = sector_align(offset + size, cluster_size) / cluster_size;
-    LIST_ENTRY* le;
-
-    le = mappings->Flink;
-    while (le != mappings) {
-        mapping* m = _CR(le, mapping, list_entry);
-
-        if (m->vcn <= vcn && m->vcn + m->length >= last_vcn) {
-            uint64_t to_read, mapping_offset;
-
-            mapping_offset = offset - (m->vcn * cluster_size);
-            to_read = ((m->vcn + m->length) * cluster_size) - mapping_offset;
-
-            if (to_read > size)
-                to_read = size;
-
-            Status = vol->block->ReadBlocks(vol->block, vol->block->Media->MediaId,
-                                            ((m->lcn * cluster_size) + mapping_offset) / vol->block->Media->BlockSize,
-                                            to_read, buf);
-            if (EFI_ERROR(Status))
-                return Status;
-
-            if (to_read == size)
-                break;
-
-            offset += to_read;
-            buf += to_read;
-            size -= to_read;
-            vcn = offset / cluster_size;
-        }
-
-        // FIXME - sparse
-
-        le = le->Flink;
-    }
-
-    return EFI_SUCCESS;
 }
 
 static void loop_through_atts(const FILE_RECORD_SEGMENT_HEADER* file_record, invocable<const ATTRIBUTE_RECORD_HEADER&, string_view, u16string_view> auto func) {

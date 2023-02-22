@@ -125,6 +125,51 @@ struct STANDARD_INFORMATION {
     uint64_t USN;
 };
 
+// https://flatcap.org/linux-ntfs/ntfs/concepts/node_header.html
+
+struct index_node_header {
+    uint32_t first_entry;
+    uint32_t total_size;
+    uint32_t allocated_size;
+    uint32_t flags;
+};
+
+// https://flatcap.org/linux-ntfs/ntfs/concepts/index_entry.html
+
+#define INDEX_ENTRY_SUBNODE     1
+#define INDEX_ENTRY_LAST        2
+
+struct index_entry {
+    MFT_SEGMENT_REFERENCE file_reference;
+    uint16_t entry_length;
+    uint16_t stream_length;
+    uint32_t flags;
+};
+
+// https://flatcap.org/linux-ntfs/ntfs/attributes/index_root.html
+
+struct index_root {
+    enum ntfs_attribute attribute_type;
+    uint32_t collation_rule;
+    uint32_t bytes_per_index_record;
+    uint8_t clusters_per_index_record;
+    uint8_t padding[3];
+    index_node_header node_header;
+    index_entry entries[1];
+};
+
+// https://flatcap.org/linux-ntfs/ntfs/concepts/index_record.html
+
+struct index_record {
+    MULTI_SECTOR_HEADER MultiSectorHeader;
+    uint64_t sequence_number;
+    uint64_t vcn;
+    index_node_header header;
+    uint16_t update_sequence;
+};
+
+#define INDEX_RECORD_MAGIC 0x58444e49 // "INDX"
+
 #pragma pack(pop)
 
 #define NTFS_FS_NAME "NTFS    "
