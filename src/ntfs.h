@@ -170,6 +170,30 @@ struct index_record {
 
 #define INDEX_RECORD_MAGIC 0x58444e49 // "INDX"
 
+// https://flatcap.org/linux-ntfs/ntfs/attributes/file_name.html
+
+enum class file_name_type : uint8_t {
+    POSIX = 0,
+    WINDOWS = 1,
+    DOS = 2,
+    WINDOWS_AND_DOS = 3
+};
+
+struct FILE_NAME {
+    MFT_SEGMENT_REFERENCE Parent;
+    int64_t CreationTime;
+    int64_t LastAccessTime;
+    int64_t LastWriteTime;
+    int64_t ChangeTime;
+    uint64_t AllocationSize;
+    uint64_t EndOfFile;
+    uint32_t FileAttributes;
+    uint32_t EaSize;
+    uint8_t FileNameLength;
+    file_name_type Namespace;
+    char16_t FileName[1];
+};
+
 #pragma pack(pop)
 
 #define NTFS_FS_NAME "NTFS    "

@@ -288,8 +288,21 @@ static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
 
     systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"read_dir\r\n");
 
-    Status = walk_btree(*ino->index_root, &ino->index_mappings, ino->index_root->node_header, ino->vol, [](const index_entry&, string_view) {
-        systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"entry\r\n");
+    // FIXME - ignore special files in root
+
+    Status = walk_btree(*ino->index_root, &ino->index_mappings, ino->index_root->node_header, ino->vol, [](const index_entry&, string_view data) {
+        char16_t s[256];
+
+        if (data.empty())
+            return;
+
+        const auto& fn = *reinterpret_cast<const FILE_NAME*>(data.data());
+
+        memcpy(s, fn.FileName, fn.FileNameLength * sizeof(char16_t));
+        s[fn.FileNameLength] = 0;
+
+        systable->ConOut->OutputString(systable->ConOut, (CHAR16*)s);
+        systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"\r\n");
     }, 0);
 
     if (EFI_ERROR(Status))
