@@ -41,6 +41,12 @@ struct inode {
     index_root* index_root;
 };
 
+struct btree_level {
+    LIST_ENTRY list_entry;
+    const index_entry* ent;
+    uint8_t data[];
+};
+
 static EFI_SYSTEM_TABLE* systable;
 static EFI_BOOT_SERVICES* bs;
 static EFI_DRIVER_BINDING_PROTOCOL drvbind;
@@ -220,56 +226,94 @@ static EFI_STATUS process_fixups(MULTI_SECTOR_HEADER* header, uint64_t length, u
 }
 
 static EFI_STATUS walk_btree(const index_root& ir, LIST_ENTRY* mappings, const index_node_header& inh, volume* vol,
-                             const invocable<const index_entry&, string_view> auto& func, unsigned int level) {
+                             const invocable<const index_entry&, string_view> auto& func) {
     EFI_STATUS Status;
+    LIST_ENTRY levels;
+    btree_level* l;
 
-    auto ent = reinterpret_cast<const index_entry*>((uint8_t*)&inh + inh.first_entry);
+    InitializeListHead(&levels);
+
+    Status = bs->AllocatePool(EfiBootServicesData, offsetof(btree_level, data), (void**)&l);
+    if (EFI_ERROR(Status))
+        return Status;
+
+    l->ent = reinterpret_cast<const index_entry*>((uint8_t*)&inh + inh.first_entry);
+    InsertTailList(&levels, &l->list_entry);
 
     do {
-        if (ent->flags & INDEX_ENTRY_SUBNODE) {
-            uint8_t* data;
-            uint64_t vcn = ((MFT_SEGMENT_REFERENCE*)((uint8_t*)ent + ent->entry_length - sizeof(uint64_t)))->SegmentNumber;
+        if (l->ent->flags & INDEX_ENTRY_SUBNODE) {
+            btree_level* l2;
+            uint64_t vcn = ((MFT_SEGMENT_REFERENCE*)((uint8_t*)l->ent + l->ent->entry_length - sizeof(uint64_t)))->SegmentNumber;
 
             if (ir.bytes_per_index_record < vol->boot_sector->BytesPerSector * vol->boot_sector->SectorsPerCluster)
                 vcn *= vol->boot_sector->BytesPerSector;
             else
                 vcn *= (uint64_t)vol->boot_sector->BytesPerSector * (uint64_t)vol->boot_sector->SectorsPerCluster;
 
-            Status = bs->AllocatePool(EfiBootServicesData, ir.bytes_per_index_record, (void**)&data);
+            Status = bs->AllocatePool(EfiBootServicesData, offsetof(btree_level, data) + ir.bytes_per_index_record,
+                                      (void**)&l2);
             if (EFI_ERROR(Status))
-                return Status;
+                goto end;
 
-            Status = read_from_mappings(vol, mappings, vcn, data, ir.bytes_per_index_record);
+            Status = read_from_mappings(vol, mappings, vcn, l2->data, ir.bytes_per_index_record);
             if (EFI_ERROR(Status)) {
-                bs->FreePool(data);
-                return Status;
+                bs->FreePool(l2);
+                goto end;
             }
 
-            auto rec = reinterpret_cast<index_record*>(data);
+            auto rec = reinterpret_cast<index_record*>(l2->data);
 
             if (rec->MultiSectorHeader.Signature != INDEX_RECORD_MAGIC) {
-                bs->FreePool(data);
-                return EFI_INVALID_PARAMETER;
+                bs->FreePool(l2);
+                Status = EFI_INVALID_PARAMETER;
+                goto end;
             }
 
-            process_fixups(&rec->MultiSectorHeader, ir.bytes_per_index_record, vol->boot_sector->BytesPerSector);
+            Status = process_fixups(&rec->MultiSectorHeader, ir.bytes_per_index_record,
+                                    vol->boot_sector->BytesPerSector);
+            if (EFI_ERROR(Status)) {
+                bs->FreePool(l2);
+                Status = EFI_INVALID_PARAMETER;
+                goto end;
+            }
 
-            Status = walk_btree(ir, mappings, rec->header, vol, func, level + 1);
+            InsertTailList(&levels, &l2->list_entry);
+            l = l2;
+            l->ent = reinterpret_cast<const index_entry*>((uint8_t*)&rec->header + rec->header.first_entry);
 
-            bs->FreePool(data);
+            continue;
+        } else if (!(l->ent->flags & INDEX_ENTRY_LAST))
+            func(*l->ent, string_view((const char*)l->ent + sizeof(index_entry), l->ent->stream_length));
 
-            if (EFI_ERROR(Status))
-                return Status;
-        } else
-            func(*ent, string_view((const char*)ent + sizeof(index_entry), ent->stream_length));
+        if (!(l->ent->flags & INDEX_ENTRY_LAST)) {
+            l->ent = reinterpret_cast<const index_entry*>((uint8_t*)l->ent + l->ent->entry_length);
+            continue;
+        }
 
-        if (ent->flags & INDEX_ENTRY_LAST)
-            break;
+        while (l->ent->flags & INDEX_ENTRY_LAST) {
+            RemoveEntryList(&l->list_entry);
+            bs->FreePool(l);
 
-        ent = reinterpret_cast<const index_entry*>((uint8_t*)ent + ent->entry_length);
-    } while (true);
+            if (IsListEmpty(&levels))
+                break;
 
-    return EFI_SUCCESS;
+            l = _CR(levels.Blink, btree_level, list_entry);
+
+            if (!(l->ent->flags & INDEX_ENTRY_LAST))
+                l->ent = reinterpret_cast<const index_entry*>((uint8_t*)l->ent + l->ent->entry_length);
+        }
+    } while (!IsListEmpty(&levels));
+
+    Status = EFI_SUCCESS;
+
+end:
+    while (!IsListEmpty(&levels)) {
+        l = _CR(levels.Flink, btree_level, list_entry);
+        RemoveEntryList(&l->list_entry);
+        bs->FreePool(l);
+    }
+
+    return Status;
 }
 
 static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
@@ -303,7 +347,7 @@ static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
 
         systable->ConOut->OutputString(systable->ConOut, (CHAR16*)s);
         systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"\r\n");
-    }, 0);
+    });
 
     if (EFI_ERROR(Status))
         return Status;
