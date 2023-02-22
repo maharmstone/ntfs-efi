@@ -305,9 +305,48 @@ static EFI_STATUS next_index_item(inode* ino, const invocable<string_view> auto&
     return EFI_SUCCESS;
 }
 
+static void win_time_to_efi(int64_t win, EFI_TIME* efi) {
+    UNUSED(win);
+
+    // FIXME
+
+    efi->Year = 1970;
+    efi->Month = 1;
+    efi->Day = 1;
+    efi->Hour = 0;
+    efi->Minute = 0;
+    efi->Second = 0;
+    efi->Pad1 = 0;
+    efi->Nanosecond = 0;
+    efi->TimeZone = 0;
+    efi->Daylight = 0;
+    efi->Pad2 = 0;
+}
+
+static uint64_t win_attributes_to_efi(uint32_t attr) {
+    uint64_t ret = 0;
+
+    if (attr & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_DIRECTORY_MFT))
+        ret |= EFI_FILE_DIRECTORY;
+
+    if (attr & FILE_ATTRIBUTE_READONLY)
+        ret |= EFI_FILE_READ_ONLY;
+
+    if (attr & FILE_ATTRIBUTE_HIDDEN)
+        ret |= EFI_FILE_HIDDEN;
+
+    if (attr & FILE_ATTRIBUTE_SYSTEM)
+        ret |= EFI_FILE_SYSTEM;
+
+    if (attr & EFI_FILE_ARCHIVE)
+        ret |= EFI_FILE_ARCHIVE;
+
+    return ret;
+}
+
 static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
     EFI_STATUS Status;
-    bool overflow = false;
+    bool overflow = false, again;
 
     UNUSED(BufferSize);
     UNUSED(Buffer);
@@ -335,40 +374,47 @@ static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
 
     // FIXME - ignore special files in root
 
-    Status = next_index_item(ino, [&](string_view data) -> bool {
-        size_t size;
+    do {
+        again = false;
 
-        const auto& fn = *reinterpret_cast<const FILE_NAME*>(data.data());
+        Status = next_index_item(ino, [&](string_view data) -> bool {
+            size_t size;
 
-        // FIXME - ignore DOS filenames
+            const auto& fn = *reinterpret_cast<const FILE_NAME*>(data.data());
 
-        size = offsetof(EFI_FILE_INFO, FileName[0]) + ((fn.FileNameLength + 1) * sizeof(char16_t));
+            if (fn.Namespace == file_name_type::DOS) { // ignore DOS filenames
+                again = true;
+                return true;
+            }
 
-        if (*BufferSize < size) {
+            size = offsetof(EFI_FILE_INFO, FileName[0]) + ((fn.FileNameLength + 1) * sizeof(char16_t));
+
+            if (*BufferSize < size) {
+                *BufferSize = size;
+                overflow = true;
+                return false;
+            }
+
+            auto& info = *(EFI_FILE_INFO*)Buffer;
+
+            info.Size = size;
+            info.FileSize = fn.EndOfFile;
+            info.PhysicalSize = fn.AllocationSize;
+            win_time_to_efi(fn.CreationTime, &info.CreateTime);
+            win_time_to_efi(fn.LastAccessTime, &info.LastAccessTime);
+            win_time_to_efi(fn.LastWriteTime, &info.ModificationTime);
+            info.Attribute = win_attributes_to_efi(fn.FileAttributes);
+
+            memcpy(info.FileName, fn.FileName, fn.FileNameLength * sizeof(char16_t));
+            info.FileName[fn.FileNameLength] = 0;
+
             *BufferSize = size;
-            overflow = true;
-            return false;
-        }
 
-        auto& info = *(EFI_FILE_INFO*)Buffer;
+            ino->position++;
 
-        info.Size = size;
-        //info->FileSize = ino->inode_item.st_size; // FIXME
-        //info->PhysicalSize = ino->inode_item.st_blocks; // FIXME
-        // info->CreateTime; // FIXME
-        // info->LastAccessTime; // FIXME
-        // info->ModificationTime; // FIXME
-        // info->Attribute = di->type == BTRFS_TYPE_DIRECTORY ? EFI_FILE_DIRECTORY : 0; // FIXME
-
-        memcpy(info.FileName, fn.FileName, fn.FileNameLength * sizeof(char16_t));
-        info.FileName[fn.FileNameLength] = 0;
-
-        *BufferSize = size;
-
-        ino->position++;
-
-        return true;
-    });
+            return true;
+        });
+    } while (again);
 
     if (overflow)
         return EFI_BUFFER_TOO_SMALL;
@@ -683,25 +729,6 @@ static EFI_STATUS load_inode(inode* ino) {
     return EFI_SUCCESS;
 }
 
-static void win_time_to_efi(int64_t win, EFI_TIME* efi) {
-    UNUSED(win);
-
-    // FIXME
-
-    efi->Year = 1970;
-    efi->Month = 1;
-    efi->Day = 1;
-    efi->Hour = 0;
-    efi->Minute = 0;
-    efi->Second = 0;
-    efi->Pad1 = 0;
-    efi->Nanosecond = 0;
-    efi->TimeZone = 0;
-    efi->Daylight = 0;
-    efi->Pad2 = 0;
-
-}
-
 static EFI_STATUS get_inode_file_info(inode* ino, UINTN* BufferSize, VOID* Buffer) {
     EFI_STATUS Status;
     unsigned int size = offsetof(EFI_FILE_INFO, FileName[0]) + sizeof(CHAR16);
@@ -735,25 +762,10 @@ static EFI_STATUS get_inode_file_info(inode* ino, UINTN* BufferSize, VOID* Buffe
     info->Size = size;
     info->FileSize = ino->size;
     info->PhysicalSize = ino->phys_size;
-    win_time_to_efi(0, &info->CreateTime); // FIXME
-    win_time_to_efi(0, &info->LastAccessTime); // FIXME
-    win_time_to_efi(0, &info->ModificationTime); // FIXME
-    info->Attribute = 0;
-
-    if (ino->standard_info.FileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_DIRECTORY_MFT))
-        info->Attribute |= EFI_FILE_DIRECTORY;
-
-    if (ino->standard_info.FileAttributes & FILE_ATTRIBUTE_READONLY)
-        info->Attribute |= EFI_FILE_READ_ONLY;
-
-    if (ino->standard_info.FileAttributes & FILE_ATTRIBUTE_HIDDEN)
-        info->Attribute |= EFI_FILE_HIDDEN;
-
-    if (ino->standard_info.FileAttributes & FILE_ATTRIBUTE_SYSTEM)
-        info->Attribute |= EFI_FILE_SYSTEM;
-
-    if (ino->standard_info.FileAttributes & EFI_FILE_ARCHIVE)
-        info->Attribute |= EFI_FILE_ARCHIVE;
+    win_time_to_efi(ino->standard_info.CreationTime, &info->CreateTime);
+    win_time_to_efi(ino->standard_info.LastAccessTime, &info->LastAccessTime);
+    win_time_to_efi(ino->standard_info.LastWriteTime, &info->ModificationTime);
+    info->Attribute = win_attributes_to_efi(ino->standard_info.FileAttributes);
 
 //     if (ino->name)
 //         memcpy(info->FileName, &ino->name[bs + 1], (wcslen(ino->name) - bs) * sizeof(WCHAR));
