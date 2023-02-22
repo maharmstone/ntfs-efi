@@ -282,11 +282,6 @@ static EFI_STATUS next_index_item(inode* ino, const invocable<string_view> auto&
             l->ent = reinterpret_cast<const index_entry*>((uint8_t*)&rec->header + rec->header.first_entry);
 
             continue;
-        } else if (!(l->ent->flags & INDEX_ENTRY_LAST)) {
-            if (func(string_view((const char*)l->ent + sizeof(index_entry), l->ent->stream_length)))
-                l->ent = reinterpret_cast<const index_entry*>((uint8_t*)l->ent + l->ent->entry_length);
-
-            return EFI_SUCCESS;
         }
 
         while (l->ent->flags & INDEX_ENTRY_LAST) {
@@ -297,9 +292,16 @@ static EFI_STATUS next_index_item(inode* ino, const invocable<string_view> auto&
                 break;
 
             l = _CR(ino->levels.Blink, btree_level, list_entry);
+        }
 
-            if (!(l->ent->flags & INDEX_ENTRY_LAST))
+        if (IsListEmpty(&ino->levels))
+            break;
+
+        if (!(l->ent->flags & INDEX_ENTRY_LAST)) {
+            if (func(string_view((const char*)l->ent + sizeof(index_entry), l->ent->stream_length)))
                 l->ent = reinterpret_cast<const index_entry*>((uint8_t*)l->ent + l->ent->entry_length);
+
+            return EFI_SUCCESS;
         }
     } while (!IsListEmpty(&ino->levels));
 
