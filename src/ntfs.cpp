@@ -225,11 +225,11 @@ static EFI_STATUS process_fixups(MULTI_SECTOR_HEADER* header, uint64_t length, u
     return EFI_SUCCESS;
 }
 
-static EFI_STATUS walk_btree(const index_root& ir, LIST_ENTRY* mappings, const index_node_header& inh, volume* vol,
-                             const invocable<const index_entry&, string_view> auto& func) {
+static EFI_STATUS walk_btree(inode* ino, const invocable<string_view> auto& func) {
     EFI_STATUS Status;
     LIST_ENTRY levels;
     btree_level* l;
+    const index_root& ir = *ino->index_root;
 
     InitializeListHead(&levels);
 
@@ -237,7 +237,7 @@ static EFI_STATUS walk_btree(const index_root& ir, LIST_ENTRY* mappings, const i
     if (EFI_ERROR(Status))
         return Status;
 
-    l->ent = reinterpret_cast<const index_entry*>((uint8_t*)&inh + inh.first_entry);
+    l->ent = reinterpret_cast<const index_entry*>((uint8_t*)&ino->index_root->node_header + ino->index_root->node_header.first_entry);
     InsertTailList(&levels, &l->list_entry);
 
     do {
@@ -245,17 +245,17 @@ static EFI_STATUS walk_btree(const index_root& ir, LIST_ENTRY* mappings, const i
             btree_level* l2;
             uint64_t vcn = ((MFT_SEGMENT_REFERENCE*)((uint8_t*)l->ent + l->ent->entry_length - sizeof(uint64_t)))->SegmentNumber;
 
-            if (ir.bytes_per_index_record < vol->boot_sector->BytesPerSector * vol->boot_sector->SectorsPerCluster)
-                vcn *= vol->boot_sector->BytesPerSector;
+            if (ir.bytes_per_index_record < ino->vol->boot_sector->BytesPerSector * ino->vol->boot_sector->SectorsPerCluster)
+                vcn *= ino->vol->boot_sector->BytesPerSector;
             else
-                vcn *= (uint64_t)vol->boot_sector->BytesPerSector * (uint64_t)vol->boot_sector->SectorsPerCluster;
+                vcn *= (uint64_t)ino->vol->boot_sector->BytesPerSector * (uint64_t)ino->vol->boot_sector->SectorsPerCluster;
 
             Status = bs->AllocatePool(EfiBootServicesData, offsetof(btree_level, data) + ir.bytes_per_index_record,
                                       (void**)&l2);
             if (EFI_ERROR(Status))
                 goto end;
 
-            Status = read_from_mappings(vol, mappings, vcn, l2->data, ir.bytes_per_index_record);
+            Status = read_from_mappings(ino->vol, &ino->index_mappings, vcn, l2->data, ir.bytes_per_index_record);
             if (EFI_ERROR(Status)) {
                 bs->FreePool(l2);
                 goto end;
@@ -270,7 +270,7 @@ static EFI_STATUS walk_btree(const index_root& ir, LIST_ENTRY* mappings, const i
             }
 
             Status = process_fixups(&rec->MultiSectorHeader, ir.bytes_per_index_record,
-                                    vol->boot_sector->BytesPerSector);
+                                    ino->vol->boot_sector->BytesPerSector);
             if (EFI_ERROR(Status)) {
                 bs->FreePool(l2);
                 Status = EFI_INVALID_PARAMETER;
@@ -283,7 +283,7 @@ static EFI_STATUS walk_btree(const index_root& ir, LIST_ENTRY* mappings, const i
 
             continue;
         } else if (!(l->ent->flags & INDEX_ENTRY_LAST))
-            func(*l->ent, string_view((const char*)l->ent + sizeof(index_entry), l->ent->stream_length));
+            func(string_view((const char*)l->ent + sizeof(index_entry), l->ent->stream_length));
 
         if (!(l->ent->flags & INDEX_ENTRY_LAST)) {
             l->ent = reinterpret_cast<const index_entry*>((uint8_t*)l->ent + l->ent->entry_length);
@@ -334,7 +334,7 @@ static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
 
     // FIXME - ignore special files in root
 
-    Status = walk_btree(*ino->index_root, &ino->index_mappings, ino->index_root->node_header, ino->vol, [](const index_entry&, string_view data) {
+    Status = walk_btree(ino, [](string_view data) {
         char16_t s[256];
 
         if (data.empty())
