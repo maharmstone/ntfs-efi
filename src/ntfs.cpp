@@ -39,6 +39,7 @@ struct inode {
     uint64_t position;
     LIST_ENTRY index_mappings;
     index_root* index_root;
+    LIST_ENTRY levels;
 };
 
 struct btree_level {
@@ -138,6 +139,12 @@ inode::~inode() {
         RemoveEntryList(&m->list_entry);
         bs->FreePool(m);
     }
+
+    while (!IsListEmpty(&levels)) {
+        auto l = _CR(levels.Flink, btree_level, list_entry);
+        RemoveEntryList(&l->list_entry);
+        bs->FreePool(l);
+    }
 }
 
 static EFI_STATUS EFIAPI file_close(struct _EFI_FILE_HANDLE* File) {
@@ -225,20 +232,14 @@ static EFI_STATUS process_fixups(MULTI_SECTOR_HEADER* header, uint64_t length, u
     return EFI_SUCCESS;
 }
 
-static EFI_STATUS walk_btree(inode* ino, const invocable<string_view> auto& func) {
+static EFI_STATUS next_index_item(inode* ino, const invocable<string_view> auto& func) {
     EFI_STATUS Status;
-    LIST_ENTRY levels;
-    btree_level* l;
     const index_root& ir = *ino->index_root;
 
-    InitializeListHead(&levels);
+    if (IsListEmpty(&ino->levels))
+        return EFI_NOT_FOUND;
 
-    Status = bs->AllocatePool(EfiBootServicesData, offsetof(btree_level, data), (void**)&l);
-    if (EFI_ERROR(Status))
-        return Status;
-
-    l->ent = reinterpret_cast<const index_entry*>((uint8_t*)&ino->index_root->node_header + ino->index_root->node_header.first_entry);
-    InsertTailList(&levels, &l->list_entry);
+    auto l = _CR(ino->levels.Blink, btree_level, list_entry);
 
     do {
         if (l->ent->flags & INDEX_ENTRY_SUBNODE) {
@@ -253,71 +254,60 @@ static EFI_STATUS walk_btree(inode* ino, const invocable<string_view> auto& func
             Status = bs->AllocatePool(EfiBootServicesData, offsetof(btree_level, data) + ir.bytes_per_index_record,
                                       (void**)&l2);
             if (EFI_ERROR(Status))
-                goto end;
+                return Status;
 
             Status = read_from_mappings(ino->vol, &ino->index_mappings, vcn, l2->data, ir.bytes_per_index_record);
             if (EFI_ERROR(Status)) {
                 bs->FreePool(l2);
-                goto end;
+                return Status;
             }
 
             auto rec = reinterpret_cast<index_record*>(l2->data);
 
             if (rec->MultiSectorHeader.Signature != INDEX_RECORD_MAGIC) {
                 bs->FreePool(l2);
-                Status = EFI_INVALID_PARAMETER;
-                goto end;
+                return EFI_INVALID_PARAMETER;
             }
 
             Status = process_fixups(&rec->MultiSectorHeader, ir.bytes_per_index_record,
                                     ino->vol->boot_sector->BytesPerSector);
             if (EFI_ERROR(Status)) {
                 bs->FreePool(l2);
-                Status = EFI_INVALID_PARAMETER;
-                goto end;
+                return EFI_INVALID_PARAMETER;
             }
 
-            InsertTailList(&levels, &l2->list_entry);
+            InsertTailList(&ino->levels, &l2->list_entry);
             l = l2;
             l->ent = reinterpret_cast<const index_entry*>((uint8_t*)&rec->header + rec->header.first_entry);
 
             continue;
-        } else if (!(l->ent->flags & INDEX_ENTRY_LAST))
-            func(string_view((const char*)l->ent + sizeof(index_entry), l->ent->stream_length));
+        } else if (!(l->ent->flags & INDEX_ENTRY_LAST)) {
+            if (func(string_view((const char*)l->ent + sizeof(index_entry), l->ent->stream_length)))
+                l->ent = reinterpret_cast<const index_entry*>((uint8_t*)l->ent + l->ent->entry_length);
 
-        if (!(l->ent->flags & INDEX_ENTRY_LAST)) {
-            l->ent = reinterpret_cast<const index_entry*>((uint8_t*)l->ent + l->ent->entry_length);
-            continue;
+            return EFI_SUCCESS;
         }
 
         while (l->ent->flags & INDEX_ENTRY_LAST) {
             RemoveEntryList(&l->list_entry);
             bs->FreePool(l);
 
-            if (IsListEmpty(&levels))
+            if (IsListEmpty(&ino->levels))
                 break;
 
-            l = _CR(levels.Blink, btree_level, list_entry);
+            l = _CR(ino->levels.Blink, btree_level, list_entry);
 
             if (!(l->ent->flags & INDEX_ENTRY_LAST))
                 l->ent = reinterpret_cast<const index_entry*>((uint8_t*)l->ent + l->ent->entry_length);
         }
-    } while (!IsListEmpty(&levels));
+    } while (!IsListEmpty(&ino->levels));
 
-    Status = EFI_SUCCESS;
-
-end:
-    while (!IsListEmpty(&levels)) {
-        l = _CR(levels.Flink, btree_level, list_entry);
-        RemoveEntryList(&l->list_entry);
-        bs->FreePool(l);
-    }
-
-    return Status;
+    return EFI_SUCCESS;
 }
 
 static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
     EFI_STATUS Status;
+    bool overflow = false;
 
     UNUSED(BufferSize);
     UNUSED(Buffer);
@@ -330,29 +320,68 @@ static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
         }
     }
 
-    systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"read_dir\r\n");
+    if (ino->position == 0 && IsListEmpty(&ino->levels)) {
+        btree_level* l;
+
+        Status = bs->AllocatePool(EfiBootServicesData, offsetof(btree_level, data), (void**)&l);
+        if (EFI_ERROR(Status)) {
+            do_print_error("AllocatePool", Status);
+            return Status;
+        }
+
+        l->ent = reinterpret_cast<const index_entry*>((uint8_t*)&ino->index_root->node_header + ino->index_root->node_header.first_entry);
+        InsertTailList(&ino->levels, &l->list_entry);
+    }
 
     // FIXME - ignore special files in root
 
-    Status = walk_btree(ino, [](string_view data) {
-        char16_t s[256];
-
-        if (data.empty())
-            return;
+    Status = next_index_item(ino, [&](string_view data) -> bool {
+        size_t size;
 
         const auto& fn = *reinterpret_cast<const FILE_NAME*>(data.data());
 
-        memcpy(s, fn.FileName, fn.FileNameLength * sizeof(char16_t));
-        s[fn.FileNameLength] = 0;
+        // FIXME - ignore DOS filenames
 
-        systable->ConOut->OutputString(systable->ConOut, (CHAR16*)s);
-        systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"\r\n");
+        size = offsetof(EFI_FILE_INFO, FileName[0]) + ((fn.FileNameLength + 1) * sizeof(char16_t));
+
+        if (*BufferSize < size) {
+            *BufferSize = size;
+            overflow = true;
+            return false;
+        }
+
+        auto& info = *(EFI_FILE_INFO*)Buffer;
+
+        info.Size = size;
+        //info->FileSize = ino->inode_item.st_size; // FIXME
+        //info->PhysicalSize = ino->inode_item.st_blocks; // FIXME
+        // info->CreateTime; // FIXME
+        // info->LastAccessTime; // FIXME
+        // info->ModificationTime; // FIXME
+        // info->Attribute = di->type == BTRFS_TYPE_DIRECTORY ? EFI_FILE_DIRECTORY : 0; // FIXME
+
+        memcpy(info.FileName, fn.FileName, fn.FileNameLength * sizeof(char16_t));
+        info.FileName[fn.FileNameLength] = 0;
+
+        *BufferSize = size;
+
+        ino->position++;
+
+        return true;
     });
+
+    if (overflow)
+        return EFI_BUFFER_TOO_SMALL;
+
+    if (Status == EFI_NOT_FOUND) { // last one
+        *BufferSize = 0;
+        return EFI_SUCCESS;
+    }
 
     if (EFI_ERROR(Status))
         return Status;
 
-    return EFI_UNSUPPORTED;
+    return EFI_SUCCESS;
 }
 
 static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
@@ -410,6 +439,12 @@ static EFI_STATUS EFIAPI file_set_position(struct _EFI_FILE_HANDLE* File, UINT64
             return EFI_UNSUPPORTED;
 
         ino->position = 0;
+
+        while (!IsListEmpty(&ino->levels)) {
+            auto l = _CR(ino->levels.Flink, btree_level, list_entry);
+            RemoveEntryList(&l->list_entry);
+            bs->FreePool(l);
+        }
     } else {
         if (Position == 0xffffffffffffffff)
             ino->position = ino->size;
@@ -560,6 +595,7 @@ static EFI_STATUS load_inode(inode* ino) {
     FILE_RECORD_SEGMENT_HEADER* file;
 
     InitializeListHead(&ino->index_mappings);
+    InitializeListHead(&ino->levels);
 
     Status = bs->AllocatePool(EfiBootServicesData, ino->vol->file_record_size, (void**)&file);
     if (EFI_ERROR(Status))
