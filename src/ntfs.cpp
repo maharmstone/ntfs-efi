@@ -40,6 +40,7 @@ struct inode {
     LIST_ENTRY index_mappings;
     index_root* index_root;
     LIST_ENTRY levels;
+    bool is_dir;
 };
 
 struct btree_level {
@@ -323,10 +324,10 @@ static void win_time_to_efi(int64_t win, EFI_TIME* efi) {
     efi->Pad2 = 0;
 }
 
-static uint64_t win_attributes_to_efi(uint32_t attr) {
+static uint64_t win_attributes_to_efi(uint32_t attr, bool is_dir) {
     uint64_t ret = 0;
 
-    if (attr & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_DIRECTORY_MFT))
+    if (is_dir)
         ret |= EFI_FILE_DIRECTORY;
 
     if (attr & FILE_ATTRIBUTE_READONLY)
@@ -403,7 +404,7 @@ static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
             win_time_to_efi(fn.CreationTime, &info.CreateTime);
             win_time_to_efi(fn.LastAccessTime, &info.LastAccessTime);
             win_time_to_efi(fn.LastWriteTime, &info.ModificationTime);
-            info.Attribute = win_attributes_to_efi(fn.FileAttributes);
+            info.Attribute = win_attributes_to_efi(fn.FileAttributes, fn.FileAttributes & FILE_ATTRIBUTE_DIRECTORY_MFT);
 
             memcpy(info.FileName, fn.FileName, fn.FileNameLength * sizeof(char16_t));
             info.FileName[fn.FileNameLength] = 0;
@@ -454,7 +455,7 @@ static EFI_STATUS EFIAPI file_read(struct _EFI_FILE_HANDLE* File, UINTN* BufferS
         }
     }
 
-    if (ino->standard_info.FileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_DIRECTORY_MFT))
+    if (ino->is_dir)
         return read_dir(ino, BufferSize, Buffer);
     else
         return read_file(ino, BufferSize, Buffer);
@@ -480,7 +481,7 @@ static EFI_STATUS EFIAPI file_set_position(struct _EFI_FILE_HANDLE* File, UINT64
         }
     }
 
-    if (ino->standard_info.FileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_DIRECTORY_MFT)) {
+    if (ino->is_dir) {
         if (Position != 0)
             return EFI_UNSUPPORTED;
 
@@ -684,6 +685,16 @@ static EFI_STATUS load_inode(inode* ino) {
                 }
             break;
 
+            case ntfs_attribute::FILE_NAME:
+                if (att.FormCode == NTFS_ATTRIBUTE_FORM::RESIDENT_FORM) {
+                    const auto& fn = *(FILE_NAME*)res_data.data();
+
+                    if (res_data.size() >= offsetof(FILE_NAME, EaSize))
+                        ino->is_dir = fn.FileAttributes & FILE_ATTRIBUTE_DIRECTORY_MFT;
+                }
+
+            break;
+
             case ntfs_attribute::INDEX_ALLOCATION:
                 if (att_name == u"$I30" && att.FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
                     ino->size = att.Form.Nonresident.FileSize;
@@ -765,7 +776,7 @@ static EFI_STATUS get_inode_file_info(inode* ino, UINTN* BufferSize, VOID* Buffe
     win_time_to_efi(ino->standard_info.CreationTime, &info->CreateTime);
     win_time_to_efi(ino->standard_info.LastAccessTime, &info->LastAccessTime);
     win_time_to_efi(ino->standard_info.LastWriteTime, &info->ModificationTime);
-    info->Attribute = win_attributes_to_efi(ino->standard_info.FileAttributes);
+    info->Attribute = win_attributes_to_efi(ino->standard_info.FileAttributes, ino->is_dir);
 
 //     if (ino->name)
 //         memcpy(info->FileName, &ino->name[bs + 1], (wcslen(ino->name) - bs) * sizeof(WCHAR));
