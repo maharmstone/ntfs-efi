@@ -55,6 +55,14 @@ static EFI_DRIVER_BINDING_PROTOCOL drvbind;
 
 static void populate_file_handle(EFI_FILE_PROTOCOL* h);
 static EFI_STATUS load_inode(inode* ino);
+static EFI_STATUS read_from_mappings(volume* vol, LIST_ENTRY* mappings, uint64_t offset,
+                                     uint8_t* buf, uint64_t size);
+static EFI_STATUS process_fixups(MULTI_SECTOR_HEADER* header, uint64_t length,
+                                 unsigned int sector_size);
+static EFI_STATUS read_mappings(volume* vol, const ATTRIBUTE_RECORD_HEADER& att,
+                                LIST_ENTRY* mappings);
+static void loop_through_atts(const FILE_RECORD_SEGMENT_HEADER* file_record,
+                              invocable<const ATTRIBUTE_RECORD_HEADER&, string_view, u16string_view> auto func);
 
 static void do_print_error(const char* func, EFI_STATUS Status) {
     UNUSED(func);
@@ -85,11 +93,87 @@ static EFI_STATUS drv_supported(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE Co
 }
 
 static EFI_STATUS find_file_in_dir(volume* vol, uint64_t dir, u16string_view name, uint64_t* inode) {
+    EFI_STATUS Status;
+    FILE_RECORD_SEGMENT_HEADER* file;
+    index_root* index_root = nullptr;
+    LIST_ENTRY index_mappings;
+    LIST_ENTRY levels;
+
+    InitializeListHead(&index_mappings);
+    InitializeListHead(&levels);
+
+    Status = bs->AllocatePool(EfiBootServicesData, vol->file_record_size, (void**)&file);
+    if (EFI_ERROR(Status))
+        return Status;
+
+    Status = read_from_mappings(vol, &vol->mft_mappings, dir * vol->file_record_size,
+                                (uint8_t*)file, vol->file_record_size);
+    if (EFI_ERROR(Status)) {
+        bs->FreePool(file);
+        return Status;
+    }
+
+    if (file->MultiSectorHeader.Signature != NTFS_FILE_SIGNATURE) {
+        bs->FreePool(file);
+        return EFI_INVALID_PARAMETER;
+    }
+
+    Status = process_fixups(&file->MultiSectorHeader, vol->file_record_size,
+                            vol->boot_sector->BytesPerSector);
+
+    if (EFI_ERROR(Status)) {
+        bs->FreePool(file);
+        return Status;
+    }
+
+    loop_through_atts(file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view res_data, u16string_view att_name) -> bool {
+        switch (att.TypeCode) {
+            case ntfs_attribute::INDEX_ALLOCATION:
+                if (att_name == u"$I30" && att.FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
+                    Status = read_mappings(vol, att, &index_mappings);
+                    if (EFI_ERROR(Status))
+                        return false;
+                }
+            break;
+
+            case ntfs_attribute::INDEX_ROOT:
+                if (att_name == u"$I30" && att.FormCode == NTFS_ATTRIBUTE_FORM::RESIDENT_FORM && !res_data.empty() && !index_root) {
+                    Status = bs->AllocatePool(EfiBootServicesData, res_data.size(), (void**)&index_root);
+                    if (EFI_ERROR(Status))
+                        return false;
+
+                    memcpy(index_root, res_data.data(), res_data.size());
+                }
+            break;
+
+            default:
+                break;
+        }
+
+        return true;
+    });
+
+    if (EFI_ERROR(Status))
+        goto end;
+
+    if (!index_root || IsListEmpty(&index_mappings)) {
+        Status = EFI_NOT_FOUND;
+        goto end;
+    }
+
     systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"find_file_in_dir\r\n");
 
-    // FIXME
+    // FIXME - search btree
 
-    return EFI_NOT_FOUND;
+    Status = EFI_NOT_FOUND; // FIXME
+
+end:
+    if (index_root)
+        bs->FreePool(index_root);
+
+    bs->FreePool(file);
+
+    return Status;
 }
 
 static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FILE_HANDLE** NewHandle, CHAR16* FileName,
