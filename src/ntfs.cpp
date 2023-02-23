@@ -84,6 +84,14 @@ static EFI_STATUS drv_supported(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE Co
                             ControllerHandle, EFI_OPEN_PROTOCOL_TEST_PROTOCOL);
 }
 
+static EFI_STATUS find_file_in_dir(volume* vol, uint64_t dir, u16string_view name, uint64_t* inode) {
+    systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"find_file_in_dir\r\n");
+
+    // FIXME
+
+    return EFI_NOT_FOUND;
+}
+
 static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FILE_HANDLE** NewHandle, CHAR16* FileName,
                                    UINT64 OpenMode, UINT64 Attributes) {
     EFI_STATUS Status;
@@ -101,13 +109,47 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
     else if (FileName[0] == L'.' && FileName[1] == 0)
         inode_num = file->inode;
     else {
-        // FIXME
+        u16string_view fn((char16_t*)FileName);
 
-        systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"file_open(");
-        systable->ConOut->OutputString(systable->ConOut, FileName);
-        systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L")\r\n");
+        if (fn.empty())
+            return EFI_NOT_FOUND;
 
-        return EFI_UNSUPPORTED;
+        if (fn.front() != u'\\')
+            inode_num = file->inode;
+        else {
+            fn = u16string_view(fn.data() + 1, fn.size());
+            inode_num = NTFS_ROOT_DIR_INODE;
+        }
+
+        while (true) {
+            u16string_view part;
+
+            auto bs = fn.find(u'\\');
+
+            if (bs != u16string_view::npos)
+                part = u16string_view(fn.data(), bs);
+            else
+                part = fn;
+
+            // FIXME - ..
+
+            if (part != u".") {
+                Status = find_file_in_dir(file->vol, inode_num, part, &inode_num);
+
+                if (Status == EFI_NOT_FOUND)
+                    return Status;
+
+                if (EFI_ERROR(Status)) {
+                    do_print_error("find_file_in_dir", Status);
+                    return Status;
+                }
+            }
+
+            if (bs == u16string_view::npos)
+                break;
+
+            fn = u16string_view(fn.data() + bs + 1, fn.size() - bs - 1);
+        }
     }
 
     Status = bs->AllocatePool(EfiBootServicesData, sizeof(inode), (void**)&ino);
