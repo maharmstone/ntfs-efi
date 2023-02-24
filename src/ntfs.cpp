@@ -41,6 +41,8 @@ struct inode {
     index_root* index_root;
     LIST_ENTRY levels;
     bool is_dir;
+    size_t name_len;
+    char16_t* name;
 };
 
 struct btree_level {
@@ -267,68 +269,244 @@ end:
     return Status;
 }
 
+static size_t count_path_parts(u16string_view v) {
+    size_t num_parts = 0;
+
+    while (!v.empty()) {
+        num_parts++;
+
+        if (auto bs = v.find(u'\\'); bs != u16string_view::npos)
+            v = u16string_view(v.data() + bs + 1, v.size() - bs - 1);
+        else
+            break;
+    }
+
+    return num_parts;
+}
+
+static void extract_parts(u16string_view v, u16string_view*& p) {
+    while (!v.empty()) {
+        if (auto bs = v.find(u'\\'); bs != u16string_view::npos) {
+            *p = u16string_view(v.data(), bs);
+            p++;
+            v = u16string_view(v.data() + bs + 1, v.size() - bs - 1);
+        } else {
+            *p = v;
+            p++;
+            break;
+        }
+    }
+}
+
+static EFI_STATUS normalize_path(u16string_view fn, u16string_view parent, char16_t*& name, size_t& name_len) {
+    EFI_STATUS Status;
+    bool from_root = false;
+    size_t num_parts = 0;
+    u16string_view* parts;
+    bool first;
+
+    if (fn.front() == '\\') {
+        from_root = true;
+        fn = u16string_view(fn.data() + 1, fn.size() - 1);
+    }
+
+    if (parent.empty())
+        from_root = true;
+
+    if (!from_root)
+        num_parts = count_path_parts(parent);
+
+    num_parts += count_path_parts(fn);
+
+    if (num_parts == 0) {
+        name = nullptr;
+        name_len = 0;
+        return EFI_SUCCESS;
+    }
+
+    Status = bs->AllocatePool(EfiBootServicesData, num_parts * sizeof(u16string_view), (void**)&parts);
+    if (EFI_ERROR(Status)) {
+        do_print_error("AllocatePool", Status);
+        return Status;
+    }
+
+    {
+        u16string_view* p = parts;
+
+        if (!from_root)
+            extract_parts(parent, p);
+
+        extract_parts(fn, p);
+    }
+
+    for (size_t i = 0; i < num_parts; i++) {
+        if (parts[i] == u".")
+            parts[i] = u"";
+        else if (parts[i] == u"..") {
+            parts[i] = u"";
+
+            if (i == 0) {
+                bs->FreePool(parts);
+                return EFI_INVALID_PARAMETER;
+            }
+
+            auto j = i - 1;
+            while (true) {
+                if (!parts[j].empty()) {
+                    parts[j] = u"";
+                    break;
+                }
+
+                if (j == 0) {
+                    bs->FreePool(parts);
+                    return EFI_INVALID_PARAMETER;
+                }
+
+                j--;
+            }
+        }
+    }
+
+    name_len = 0;
+    first = true;
+    for (size_t i = 0; i < num_parts; i++) {
+        if (parts[i].empty())
+            continue;
+
+        if (!first)
+            name_len++;
+
+        name_len += parts[i].size();
+        first = false;
+    }
+
+    if (name_len == 0) {
+        bs->FreePool(parts);
+        name = nullptr;
+        return EFI_SUCCESS;
+    }
+
+    Status = bs->AllocatePool(EfiBootServicesData, name_len * sizeof(char16_t), (void**)&name);
+    if (EFI_ERROR(Status)) {
+        do_print_error("AllocatePool", Status);
+        bs->FreePool(parts);
+        return Status;
+    }
+
+    {
+        char16_t* n = name;
+
+        first = true;
+        for (size_t i = 0; i < num_parts; i++) {
+            if (parts[i].empty())
+                continue;
+
+            if (!first) {
+                *n = u'\\';
+                n++;
+            }
+
+            memcpy(n, parts[i].data(), parts[i].size() * sizeof(char16_t));
+            n += parts[i].size();
+            first = false;
+        }
+    }
+
+    bs->FreePool(parts);
+
+    return EFI_SUCCESS;
+}
+
 static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FILE_HANDLE** NewHandle, CHAR16* FileName,
                                    UINT64 OpenMode, UINT64 Attributes) {
     EFI_STATUS Status;
     inode* file = _CR(File, inode, proto);
     uint64_t inode_num;
     inode* ino;
+    char16_t* name;
+    size_t name_len;
 
     UNUSED(Attributes);
 
     if (OpenMode & EFI_FILE_MODE_CREATE)
         return EFI_UNSUPPORTED;
 
-    if (FileName[0] == L'\\' && FileName[1] == 0)
+    if (FileName[0] == L'\\' && FileName[1] == 0) {
         inode_num = NTFS_ROOT_DIR_INODE;
-    else if (FileName[0] == L'.' && FileName[1] == 0)
+        name = nullptr;
+        name_len = 0;
+    } else if (FileName[0] == L'.' && FileName[1] == 0) {
         inode_num = file->inode;
-    else {
+
+        if (file->name) {
+            Status = bs->AllocatePool(EfiBootServicesData, file->name_len * sizeof(char16_t), (void**)&name);
+            if (EFI_ERROR(Status)) {
+                do_print_error("AllocatePool", Status);
+                return Status;
+            }
+
+            memcpy(name, file->name, file->name_len * sizeof(char16_t));
+            name_len = file->name_len;
+        } else {
+            name = nullptr;
+            name_len = 0;
+        }
+    } else {
         u16string_view fn((char16_t*)FileName);
 
         if (fn.empty())
             return EFI_NOT_FOUND;
 
-        if (fn.front() != u'\\')
-            inode_num = file->inode;
-        else {
-            fn = u16string_view(fn.data() + 1, fn.size());
-            inode_num = NTFS_ROOT_DIR_INODE;
+        Status = normalize_path(fn, u16string_view(file->name, file->name_len), name, name_len);
+        if (EFI_ERROR(Status)) {
+            do_print_error("normalize_path", Status);
+            return Status;
         }
 
-        while (true) {
-            u16string_view part;
+        fn = u16string_view(name, name_len);
+        inode_num = NTFS_ROOT_DIR_INODE;
 
-            auto bs = fn.find(u'\\');
+        if (!fn.empty()) {
+            while (true) {
+                u16string_view part;
 
-            if (bs != u16string_view::npos)
-                part = u16string_view(fn.data(), bs);
-            else
-                part = fn;
+                auto backslash = fn.find(u'\\');
 
-            // FIXME - ..
+                if (backslash != u16string_view::npos)
+                    part = u16string_view(fn.data(), backslash);
+                else
+                    part = fn;
 
-            if (part != u".") {
                 Status = find_file_in_dir(file->vol, inode_num, part, &inode_num);
 
-                if (Status == EFI_NOT_FOUND)
+                if (Status == EFI_NOT_FOUND) {
+                    if (name)
+                        bs->FreePool(name);
+
                     return Status;
+                }
 
                 if (EFI_ERROR(Status)) {
+                    if (name)
+                        bs->FreePool(name);
+
                     do_print_error("find_file_in_dir", Status);
                     return Status;
                 }
+
+                if (backslash == u16string_view::npos)
+                    break;
+
+                fn = u16string_view(fn.data() + backslash + 1, fn.size() - backslash - 1);
             }
-
-            if (bs == u16string_view::npos)
-                break;
-
-            fn = u16string_view(fn.data() + bs + 1, fn.size() - bs - 1);
         }
     }
 
     Status = bs->AllocatePool(EfiBootServicesData, sizeof(inode), (void**)&ino);
     if (EFI_ERROR(Status)) {
+        if (name)
+            bs->FreePool(name);
+
         do_print_error("AllocatePool", Status);
         return Status;
     }
@@ -339,6 +517,8 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 
     ino->inode = inode_num;
     ino->vol = file->vol;
+    ino->name = name;
+    ino->name_len = name_len;
 
     *NewHandle = &ino->proto;
 
@@ -346,6 +526,9 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 }
 
 inode::~inode() {
+    if (name)
+        bs->FreePool(name);
+
     if (!inode_loaded)
         return;
 
