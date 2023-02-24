@@ -717,18 +717,27 @@ static EFI_STATUS next_index_item(inode* ino, const invocable<string_view> auto&
 }
 
 static void win_time_to_efi(int64_t win, EFI_TIME* efi) {
-    UNUSED(win);
+    int64_t secs, time, days;
 
-    // FIXME
+    secs = win / 10000000;
+    time = secs % 86400;
+    days = secs / 86400;
 
-    efi->Year = 1970;
-    efi->Month = 1;
-    efi->Day = 1;
-    efi->Hour = 0;
-    efi->Minute = 0;
-    efi->Second = 0;
+    unsigned int jd = 2305814 + days; // Julian date
+
+    unsigned int f = jd + 1401 + (((((4 * jd) + 274277) / 146097) * 3) / 4) - 38;
+    unsigned int e = (4 * f) + 3;
+    unsigned int g = (e % 1461) / 4;
+    unsigned int h = (5 * g) + 2;
+
+    efi->Month = (((h / 153) + 2) % 12) + 1;
+    efi->Year = (e / 1461) - 4716 + ((14 - efi->Month) / 12);
+    efi->Day = ((h % 153) / 5) + 1;
+    efi->Hour = time / 3600;
+    efi->Minute = (time % 3600) / 60;
+    efi->Second = time % 60;
     efi->Pad1 = 0;
-    efi->Nanosecond = 0;
+    efi->Nanosecond = (win % 10000000) * 100;
     efi->TimeZone = 0;
     efi->Daylight = 0;
     efi->Pad2 = 0;
