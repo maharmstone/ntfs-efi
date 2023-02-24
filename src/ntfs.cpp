@@ -1146,18 +1146,16 @@ static EFI_STATUS get_inode_file_info(inode* ino, UINTN* BufferSize, VOID* Buffe
     EFI_STATUS Status;
     unsigned int size = offsetof(EFI_FILE_INFO, FileName[0]) + sizeof(CHAR16);
     EFI_FILE_INFO* info = (EFI_FILE_INFO*)Buffer;
-    // size_t bs = 0;
+    u16string_view name;
 
-    // if (ino->name) {
-    //     for (int i = wcslen(ino->name); i >= 0; i--) {
-    //         if (ino->name[i] == '\\') {
-    //             bs = i;
-    //             break;
-    //         }
-    //     }
-    //
-    //     size += (wcslen(ino->name) - bs - 1) * sizeof(WCHAR);
-    // }
+    if (ino->name) {
+        name = u16string_view(ino->name, ino->name_len);
+
+        if (auto bs = name.rfind(u'\\'); bs != u16string_view::npos)
+            name = u16string_view(name.data() + bs + 1, name.size() - bs - 1);
+
+        size += name.size() * sizeof(char16_t);
+    }
 
     if (*BufferSize < size) {
         *BufferSize = size;
@@ -1180,9 +1178,10 @@ static EFI_STATUS get_inode_file_info(inode* ino, UINTN* BufferSize, VOID* Buffe
     win_time_to_efi(ino->standard_info.LastWriteTime, &info->ModificationTime);
     info->Attribute = win_attributes_to_efi(ino->standard_info.FileAttributes, ino->is_dir);
 
-//     if (ino->name)
-//         memcpy(info->FileName, &ino->name[bs + 1], (wcslen(ino->name) - bs) * sizeof(WCHAR));
-//     else
+    if (!name.empty()) {
+        memcpy(info->FileName, name.data(), name.size() * sizeof(char16_t));
+        info->FileName[name.size()] = 0;
+    } else
         info->FileName[0] = 0;
 
     return EFI_SUCCESS;
