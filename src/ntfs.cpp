@@ -43,6 +43,8 @@ struct inode {
     bool is_dir;
     size_t name_len;
     char16_t* name;
+    bool data_loaded;
+    LIST_ENTRY data_mappings;
 };
 
 struct btree_level {
@@ -546,6 +548,12 @@ inode::~inode() {
         RemoveEntryList(&l->list_entry);
         bs->FreePool(l);
     }
+
+    while (!IsListEmpty(&data_mappings)) {
+        mapping* m = _CR(data_mappings.Flink, mapping, list_entry);
+        RemoveEntryList(&m->list_entry);
+        bs->FreePool(m);
+    }
 }
 
 static EFI_STATUS EFIAPI file_close(struct _EFI_FILE_HANDLE* File) {
@@ -834,15 +842,100 @@ static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
 }
 
 static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
-    UNUSED(ino);
-    UNUSED(BufferSize);
-    UNUSED(Buffer);
+    EFI_STATUS Status;
+    uint64_t start, end, start_aligned, end_aligned;
+    uint8_t* tmp = nullptr;
 
-    systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"read_file\r\n");
+    if (ino->position >= ino->size || *BufferSize == 0) {
+        *BufferSize = 0;
+        return EFI_SUCCESS;
+    }
 
-    // FIXME
+    if (!ino->data_loaded) {
+        FILE_RECORD_SEGMENT_HEADER* file;
 
-    return EFI_UNSUPPORTED;
+        Status = bs->AllocatePool(EfiBootServicesData, ino->vol->file_record_size, (void**)&file);
+        if (EFI_ERROR(Status)) {
+            do_print_error("AllocatePool", Status);
+            return Status;
+        }
+
+        Status = read_from_mappings(ino->vol, &ino->vol->mft_mappings, ino->inode * ino->vol->file_record_size,
+                                    (uint8_t*)file, ino->vol->file_record_size);
+        if (EFI_ERROR(Status)) {
+            do_print_error("read_from_mappings", Status);
+            bs->FreePool(file);
+            return Status;
+        }
+
+        if (file->MultiSectorHeader.Signature != NTFS_FILE_SIGNATURE) {
+            bs->FreePool(file);
+            return EFI_INVALID_PARAMETER;
+        }
+
+        Status = EFI_SUCCESS;
+
+        loop_through_atts(file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view, u16string_view att_name) -> bool {
+            // FIXME - resident data?
+            if (att.TypeCode == ntfs_attribute::DATA && att.FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM && att_name.empty()) {
+                Status = read_mappings(ino->vol, att, &ino->data_mappings);
+                if (EFI_ERROR(Status))
+                    do_print_error("read_mappings", Status);
+                return false;
+            }
+
+            return true;
+        });
+
+        bs->FreePool(file);
+
+        if (EFI_ERROR(Status))
+            return Status;
+
+        ino->data_loaded = true;
+    }
+
+    start = ino->position;
+    end = ino->position + *BufferSize;
+
+    if (end > ino->size)
+        end = ino->size;
+
+    start_aligned = start & ~(ino->vol->boot_sector->BytesPerSector - 1);
+    end_aligned = sector_align(end, ino->vol->boot_sector->BytesPerSector);
+
+    if (start_aligned != start || end_aligned != end) {
+        Status = bs->AllocatePool(EfiBootServicesData, end_aligned - start_aligned, (void**)&tmp);
+        if (EFI_ERROR(Status)) {
+            do_print_error("AllocatePool", Status);
+            return Status;
+        }
+    }
+
+    // FIXME - return error if DATA is encrypted
+    // FIXME - compressed data (LZNT1 and WOF)
+    // FIXME - ValidDataLength
+
+    Status = read_from_mappings(ino->vol, &ino->data_mappings, start_aligned,
+                                tmp ? tmp : (uint8_t*)Buffer, end_aligned - start_aligned);
+    if (EFI_ERROR(Status)) {
+        do_print_error("read_from_mappings", Status);
+
+        if (tmp)
+            bs->FreePool(tmp);
+
+        return Status;
+    }
+
+    if (tmp) {
+        memcpy(Buffer, tmp + start - start_aligned, end - start);
+        bs->FreePool(tmp);
+    }
+
+    ino->position = end;
+    *BufferSize = end - start;
+
+    return EFI_SUCCESS;
 }
 
 static EFI_STATUS EFIAPI file_read(struct _EFI_FILE_HANDLE* File, UINTN* BufferSize, VOID* Buffer) {
@@ -1045,6 +1138,7 @@ static EFI_STATUS load_inode(inode* ino) {
 
     InitializeListHead(&ino->index_mappings);
     InitializeListHead(&ino->levels);
+    InitializeListHead(&ino->data_mappings);
 
     Status = bs->AllocatePool(EfiBootServicesData, ino->vol->file_record_size, (void**)&file);
     if (EFI_ERROR(Status))
@@ -1115,6 +1209,14 @@ static EFI_STATUS load_inode(inode* ino) {
                         return false;
 
                     memcpy(ino->index_root, res_data.data(), res_data.size());
+                }
+            break;
+
+            case ntfs_attribute::DATA:
+                // FIXME - resident data?
+                if (att_name.empty() && att.FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
+                    ino->size = att.Form.Nonresident.FileSize;
+                    ino->phys_size = att.Form.Nonresident.AllocatedLength;
                 }
             break;
 
