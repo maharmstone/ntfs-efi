@@ -180,7 +180,7 @@ static EFI_STATUS find_file_in_dir(volume* vol, uint64_t dir, u16string_view nam
     if (EFI_ERROR(Status))
         goto end;
 
-    if (!ir || IsListEmpty(&index_mappings)) {
+    if (!ir) {
         Status = EFI_NOT_FOUND;
         goto end;
     }
