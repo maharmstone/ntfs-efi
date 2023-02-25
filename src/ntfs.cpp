@@ -99,8 +99,8 @@ static EFI_STATUS drv_supported(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE Co
                             ControllerHandle, EFI_OPEN_PROTOCOL_TEST_PROTOCOL);
 }
 
-static int cmp_filenames(u16string_view fn1, u16string_view fn2) {
-    // FIXME - case-insensitivity
+static int cmp_filenames(char16_t* upcase, u16string_view fn1, u16string_view fn2) {
+    // FIXME - what about directories with case-sensitivity flag set?
 
     while (!fn1.empty() && !fn2.empty()) {
         if (fn1.empty())
@@ -109,9 +109,12 @@ static int cmp_filenames(u16string_view fn1, u16string_view fn2) {
         if (fn2.empty())
             return 1;
 
-        if (fn1[0] < fn2[0])
+        char16_t c1 = upcase[fn1[0]];
+        char16_t c2 = upcase[fn2[0]];
+
+        if (c1 < c2)
             return -1;
-        else if (fn1[0] > fn2[0])
+        else if (c1 > c2)
             return 1;
 
         fn1 = u16string_view(fn1.data() + 1, fn1.size() - 1);
@@ -199,7 +202,7 @@ static EFI_STATUS find_file_in_dir(volume* vol, uint64_t dir, u16string_view nam
             const auto& fn = *(FILE_NAME*)data.data();
             u16string_view ent_name(fn.FileName, fn.FileNameLength);
 
-            auto cmp = cmp_filenames(name, ent_name);
+            auto cmp = cmp_filenames(vol->upcase, name, ent_name);
 
             if (cmp == 0) { // found
                 *inode = ent->file_reference.SegmentNumber;
