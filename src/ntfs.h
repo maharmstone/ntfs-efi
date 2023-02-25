@@ -199,6 +199,7 @@ struct FILE_NAME {
 #define NTFS_FS_NAME "NTFS    "
 
 #define NTFS_ROOT_DIR_INODE     5
+#define NTFS_UPCASE_INODE       10
 
 #define NTFS_FILE_SIGNATURE     0x454c4946 // "FILE"
 

@@ -26,6 +26,7 @@ struct volume {
     EFI_DISK_IO_PROTOCOL* disk_io;
     uint64_t file_record_size;
     LIST_ENTRY mft_mappings;
+    char16_t upcase[0x10000];
 };
 
 struct inode {
@@ -1422,6 +1423,70 @@ volume::~volume() {
     bs->FreePool(boot_sector);
 }
 
+static EFI_STATUS read_upcase(volume* vol) {
+    EFI_STATUS Status;
+    FILE_RECORD_SEGMENT_HEADER* file;
+    LIST_ENTRY mappings;
+    uint64_t size;
+
+    InitializeListHead(&mappings);
+
+    Status = bs->AllocatePool(EfiBootServicesData, vol->file_record_size, (void**)&file);
+    if (EFI_ERROR(Status))
+        return Status;
+
+    Status = read_from_mappings(vol, &vol->mft_mappings, NTFS_UPCASE_INODE * vol->file_record_size,
+                                (uint8_t*)file, vol->file_record_size);
+    if (EFI_ERROR(Status)) {
+        bs->FreePool(file);
+        return Status;
+    }
+
+    if (file->MultiSectorHeader.Signature != NTFS_FILE_SIGNATURE) {
+        bs->FreePool(file);
+        return EFI_INVALID_PARAMETER;
+    }
+
+    Status = process_fixups(&file->MultiSectorHeader, vol->file_record_size,
+                            vol->boot_sector->BytesPerSector);
+
+    if (EFI_ERROR(Status)) {
+        bs->FreePool(file);
+        return Status;
+    }
+
+    loop_through_atts(file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view, u16string_view att_name) -> bool {
+        switch (att.TypeCode) {
+            case ntfs_attribute::DATA:
+                // FIXME - resident data?
+                if (att_name.empty() && att.FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
+                    size = att.Form.Nonresident.AllocatedLength;
+                    Status = read_mappings(vol, att, &mappings);
+                    return false;
+                }
+            break;
+
+            default:
+                break;
+        }
+
+        return true;
+    });
+
+    if (EFI_ERROR(Status))
+        return Status;
+
+    Status = read_from_mappings(vol, &mappings, 0, (uint8_t*)vol->upcase, min(size, sizeof(vol->upcase)));
+
+    while (!IsListEmpty(&mappings)) {
+        mapping* m = _CR(mappings.Flink, mapping, list_entry);
+        RemoveEntryList(&m->list_entry);
+        bs->FreePool(m);
+    }
+
+    return Status;
+}
+
 static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE ControllerHandle,
                                    EFI_DEVICE_PATH_PROTOCOL* RemainingDevicePath) {
     EFI_STATUS Status;
@@ -1510,6 +1575,16 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
     Status = read_mft(vol);
     if (EFI_ERROR(Status)) {
         do_print_error("read_mft", Status);
+        vol->volume::~volume();
+        bs->FreePool(vol);
+        bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
+        bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
+        return Status;
+    }
+
+    Status = read_upcase(vol);
+    if (EFI_ERROR(Status)) {
+        do_print_error("read_upcase", Status);
         vol->volume::~volume();
         bs->FreePool(vol);
         bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
