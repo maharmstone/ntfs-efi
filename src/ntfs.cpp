@@ -17,6 +17,8 @@ struct mapping {
 };
 
 struct volume {
+    ~volume();
+
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL proto;
     NTFS_BOOT_SECTOR* boot_sector;
     EFI_HANDLE controller;
@@ -1410,6 +1412,16 @@ static EFI_STATUS read_mft(volume* vol) {
     return Status;
 }
 
+volume::~volume() {
+    while (!IsListEmpty(&mft_mappings)) {
+        mapping* m = _CR(mft_mappings.Flink, mapping, list_entry);
+        RemoveEntryList(&m->list_entry);
+        bs->FreePool(m);
+    }
+
+    bs->FreePool(boot_sector);
+}
+
 static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE ControllerHandle,
                                    EFI_DEVICE_PATH_PROTOCOL* RemainingDevicePath) {
     EFI_STATUS Status;
@@ -1498,14 +1510,7 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
     Status = read_mft(vol);
     if (EFI_ERROR(Status)) {
         do_print_error("read_mft", Status);
-
-        while (!IsListEmpty(&vol->mft_mappings)) {
-            mapping* m = _CR(vol->mft_mappings.Flink, mapping, list_entry);
-            RemoveEntryList(&m->list_entry);
-            bs->FreePool(m);
-        }
-
-        bs->FreePool(sb);
+        vol->volume::~volume();
         bs->FreePool(vol);
         bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
         bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
@@ -1517,14 +1522,7 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
     Status = bs->InstallProtocolInterface(&ControllerHandle, &fs_guid, EFI_NATIVE_INTERFACE, &vol->proto);
     if (EFI_ERROR(Status)) {
         do_print_error("InstallProtocolInterface", Status);
-
-        while (!IsListEmpty(&vol->mft_mappings)) {
-            mapping* m = _CR(vol->mft_mappings.Flink, mapping, list_entry);
-            RemoveEntryList(&m->list_entry);
-            bs->FreePool(m);
-        }
-
-        bs->FreePool(sb);
+        vol->volume::~volume();
         bs->FreePool(vol);
         bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
         bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
