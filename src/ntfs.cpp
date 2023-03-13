@@ -48,6 +48,7 @@ struct inode {
     char16_t* name;
     bool data_loaded;
     LIST_ENTRY data_mappings;
+    uint8_t* data;
 };
 
 struct btree_level {
@@ -537,6 +538,9 @@ inode::~inode() {
     if (name)
         bs->FreePool(name);
 
+    if (data)
+        bs->FreePool(data);
+
     if (!inode_loaded)
         return;
 
@@ -858,8 +862,7 @@ static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
 
 static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
     EFI_STATUS Status;
-    uint64_t start, end, start_aligned, end_aligned;
-    uint8_t* tmp = nullptr;
+    uint64_t start, end;
 
     if (ino->position >= ino->size || *BufferSize == 0) {
         *BufferSize = 0;
@@ -890,12 +893,26 @@ static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
 
         Status = EFI_SUCCESS;
 
-        loop_through_atts(file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view, u16string_view att_name) -> bool {
-            // FIXME - resident data?
-            if (att.TypeCode == ntfs_attribute::DATA && att.FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM && att_name.empty()) {
-                Status = read_mappings(ino->vol, att, &ino->data_mappings);
-                if (EFI_ERROR(Status))
-                    do_print_error("read_mappings", Status);
+        loop_through_atts(file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view data, u16string_view att_name) -> bool {
+            if (att.TypeCode == ntfs_attribute::DATA && att_name.empty()) {
+                switch (att.FormCode) {
+                    case NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM:
+                        Status = read_mappings(ino->vol, att, &ino->data_mappings);
+                        if (EFI_ERROR(Status))
+                            do_print_error("read_mappings", Status);
+                        break;
+
+                    case NTFS_ATTRIBUTE_FORM::RESIDENT_FORM:
+                        Status = bs->AllocatePool(EfiBootServicesData, data.size(), (void**)&ino->data);
+                        if (EFI_ERROR(Status)) {
+                            do_print_error("AllocatePool", Status);
+                            break;
+                        }
+
+                        memcpy(ino->data, data.data(), data.size());
+                        break;
+                }
+
                 return false;
             }
 
@@ -916,35 +933,42 @@ static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
     if (end > ino->size)
         end = ino->size;
 
-    start_aligned = start & ~(ino->vol->boot_sector->BytesPerSector - 1);
-    end_aligned = sector_align(end, ino->vol->boot_sector->BytesPerSector);
+    if (ino->data)
+        memcpy(Buffer, ino->data + start, end - start);
+    else {
+        uint64_t start_aligned, end_aligned;
+        uint8_t* tmp = nullptr;
 
-    if (start_aligned != start || end_aligned != end) {
-        Status = bs->AllocatePool(EfiBootServicesData, end_aligned - start_aligned, (void**)&tmp);
+        start_aligned = start & ~(ino->vol->boot_sector->BytesPerSector - 1);
+        end_aligned = sector_align(end, ino->vol->boot_sector->BytesPerSector);
+
+        if (start_aligned != start || end_aligned != end) {
+            Status = bs->AllocatePool(EfiBootServicesData, end_aligned - start_aligned, (void**)&tmp);
+            if (EFI_ERROR(Status)) {
+                do_print_error("AllocatePool", Status);
+                return Status;
+            }
+        }
+
+        // FIXME - return error if DATA is encrypted
+        // FIXME - compressed data (LZNT1 and WOF)
+        // FIXME - ValidDataLength
+
+        Status = read_from_mappings(ino->vol, &ino->data_mappings, start_aligned,
+                                    tmp ? tmp : (uint8_t*)Buffer, end_aligned - start_aligned);
         if (EFI_ERROR(Status)) {
-            do_print_error("AllocatePool", Status);
+            do_print_error("read_from_mappings", Status);
+
+            if (tmp)
+                bs->FreePool(tmp);
+
             return Status;
         }
-    }
 
-    // FIXME - return error if DATA is encrypted
-    // FIXME - compressed data (LZNT1 and WOF)
-    // FIXME - ValidDataLength
-
-    Status = read_from_mappings(ino->vol, &ino->data_mappings, start_aligned,
-                                tmp ? tmp : (uint8_t*)Buffer, end_aligned - start_aligned);
-    if (EFI_ERROR(Status)) {
-        do_print_error("read_from_mappings", Status);
-
-        if (tmp)
+        if (tmp) {
+            memcpy(Buffer, tmp + start - start_aligned, end - start);
             bs->FreePool(tmp);
-
-        return Status;
-    }
-
-    if (tmp) {
-        memcpy(Buffer, tmp + start - start_aligned, end - start);
-        bs->FreePool(tmp);
+        }
     }
 
     ino->position = end;
