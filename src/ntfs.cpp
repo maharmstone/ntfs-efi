@@ -1468,7 +1468,7 @@ static EFI_STATUS read_upcase(volume* vol) {
     loop_through_atts(file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view, u16string_view att_name) -> bool {
         switch (att.TypeCode) {
             case ntfs_attribute::DATA:
-                // FIXME - resident data?
+                // assuming that $UpCase DATA can never be resident
                 if (att_name.empty() && att.FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
                     size = att.Form.Nonresident.AllocatedLength;
                     Status = read_mappings(vol, att, &mappings);
