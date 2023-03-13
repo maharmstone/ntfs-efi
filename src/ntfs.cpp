@@ -1228,10 +1228,17 @@ static EFI_STATUS load_inode(inode* ino) {
             break;
 
             case ntfs_attribute::DATA:
-                // FIXME - resident data?
-                if (att_name.empty() && att.FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
-                    ino->size = att.Form.Nonresident.FileSize;
-                    ino->phys_size = att.Form.Nonresident.AllocatedLength;
+                if (att_name.empty()) {
+                    switch (att.FormCode) {
+                        case NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM:
+                            ino->size = att.Form.Nonresident.FileSize;
+                            ino->phys_size = att.Form.Nonresident.AllocatedLength;
+                        break;
+
+                        case NTFS_ATTRIBUTE_FORM::RESIDENT_FORM:
+                            ino->size = ino->phys_size = att.Form.Resident.ValueLength;
+                        break;
+                    }
                 }
             break;
 
