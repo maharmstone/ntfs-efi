@@ -603,11 +603,15 @@ static EFI_STATUS read_from_mappings(volume* vol, LIST_ENTRY* mappings, uint64_t
             if (to_read > size)
                 to_read = size;
 
-            Status = vol->block->ReadBlocks(vol->block, vol->block->Media->MediaId,
-                                            ((m->lcn * cluster_size) + mapping_offset) / vol->block->Media->BlockSize,
-                                            to_read, buf);
-            if (EFI_ERROR(Status))
-                return Status;
+            if (m->lcn == 0) // sparse
+                memset(buf, 0, to_read);
+            else {
+                Status = vol->block->ReadBlocks(vol->block, vol->block->Media->MediaId,
+                                                ((m->lcn * cluster_size) + mapping_offset) / vol->block->Media->BlockSize,
+                                                to_read, buf);
+                if (EFI_ERROR(Status))
+                    return Status;
+            }
 
             if (to_read == size)
                 break;
@@ -617,8 +621,6 @@ static EFI_STATUS read_from_mappings(volume* vol, LIST_ENTRY* mappings, uint64_t
             size -= to_read;
             vcn = offset / cluster_size;
         }
-
-        // FIXME - sparse
 
         le = le->Flink;
     }
