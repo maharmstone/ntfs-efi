@@ -969,7 +969,6 @@ static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
             }
         }
 
-        // FIXME - return error if DATA is encrypted
         // FIXME - compressed data (LZNT1 and WOF)
 
         Status = read_from_mappings(ino->vol, &ino->data_mappings, start_aligned,
