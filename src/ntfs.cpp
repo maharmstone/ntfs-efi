@@ -39,6 +39,7 @@ struct inode {
     STANDARD_INFORMATION standard_info;
     uint64_t size;
     uint64_t phys_size;
+    uint64_t vdl;
     uint64_t position;
     LIST_ENTRY index_mappings;
     index_root* index_root;
@@ -869,6 +870,19 @@ static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
         return EFI_SUCCESS;
     }
 
+    if (ino->position >= ino->vdl) {
+        UINTN to_read = *BufferSize;
+
+        if (to_read > ino->size - ino->position)
+            to_read = ino->size - ino->position;
+
+        memset(Buffer, 0, to_read);
+
+        *BufferSize = to_read;
+
+        return EFI_SUCCESS;
+    }
+
     if (!ino->data_loaded) {
         FILE_RECORD_SEGMENT_HEADER* file;
 
@@ -936,13 +950,18 @@ static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
     if (ino->data)
         memcpy(Buffer, ino->data + start, end - start);
     else {
-        uint64_t start_aligned, end_aligned;
+        uint64_t start_aligned, valid_end, end_aligned;
         uint8_t* tmp = nullptr;
 
-        start_aligned = start & ~(ino->vol->boot_sector->BytesPerSector - 1);
-        end_aligned = sector_align(end, ino->vol->boot_sector->BytesPerSector);
+        valid_end = end;
 
-        if (start_aligned != start || end_aligned != end) {
+        if (valid_end > ino->vdl)
+            valid_end = ino->vdl;
+
+        start_aligned = start & ~(ino->vol->boot_sector->BytesPerSector - 1);
+        end_aligned = sector_align(valid_end, ino->vol->boot_sector->BytesPerSector);
+
+        if (start_aligned != start || end_aligned != valid_end) {
             Status = bs->AllocatePool(EfiBootServicesData, end_aligned - start_aligned, (void**)&tmp);
             if (EFI_ERROR(Status)) {
                 do_print_error("AllocatePool", Status);
@@ -952,7 +971,6 @@ static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
 
         // FIXME - return error if DATA is encrypted
         // FIXME - compressed data (LZNT1 and WOF)
-        // FIXME - ValidDataLength
 
         Status = read_from_mappings(ino->vol, &ino->data_mappings, start_aligned,
                                     tmp ? tmp : (uint8_t*)Buffer, end_aligned - start_aligned);
@@ -966,9 +984,12 @@ static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
         }
 
         if (tmp) {
-            memcpy(Buffer, tmp + start - start_aligned, end - start);
+            memcpy(Buffer, tmp + start - start_aligned, valid_end - start);
             bs->FreePool(tmp);
         }
+
+        if (valid_end < end)
+            memset((uint8_t*)Buffer + valid_end - start, 0, end - valid_end - start);
     }
 
     ino->position = end;
@@ -1257,10 +1278,11 @@ static EFI_STATUS load_inode(inode* ino) {
                         case NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM:
                             ino->size = att.Form.Nonresident.FileSize;
                             ino->phys_size = att.Form.Nonresident.AllocatedLength;
+                            ino->vdl = att.Form.Nonresident.ValidDataLength;
                         break;
 
                         case NTFS_ATTRIBUTE_FORM::RESIDENT_FORM:
-                            ino->size = ino->phys_size = att.Form.Resident.ValueLength;
+                            ino->size = ino->phys_size = ino->vdl = att.Form.Resident.ValueLength;
                         break;
                     }
                 }
