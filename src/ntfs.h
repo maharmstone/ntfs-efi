@@ -194,10 +194,23 @@ struct FILE_NAME {
     char16_t FileName[1];
 };
 
+// https://flatcap.org/linux-ntfs/ntfs/attributes/attribute_list.html
+
+struct attribute_list_entry {
+    enum ntfs_attribute type;
+    uint16_t record_length;
+    uint8_t name_length;
+    uint8_t name_offset;
+    uint64_t starting_vcn;
+    MFT_SEGMENT_REFERENCE file_reference;
+    uint16_t instance;
+};
+
 #pragma pack(pop)
 
 #define NTFS_FS_NAME "NTFS    "
 
+#define NTFS_MFT_INODE          0
 #define NTFS_ROOT_DIR_INODE     5
 #define NTFS_UPCASE_INODE       10
 
