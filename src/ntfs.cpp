@@ -70,8 +70,8 @@ static EFI_STATUS process_fixups(MULTI_SECTOR_HEADER* header, uint64_t length,
                                  unsigned int sector_size);
 static EFI_STATUS read_mappings(volume* vol, const ATTRIBUTE_RECORD_HEADER& att,
                                 LIST_ENTRY* mappings);
-static void loop_through_atts(const FILE_RECORD_SEGMENT_HEADER* file_record,
-                              invocable<const ATTRIBUTE_RECORD_HEADER&, string_view, u16string_view> auto func);
+static EFI_STATUS loop_through_atts(const FILE_RECORD_SEGMENT_HEADER* file_record,
+                                    invocable<const ATTRIBUTE_RECORD_HEADER&, string_view, u16string_view> auto func);
 
 static void do_print_error(const char* func, EFI_STATUS Status) {
     UNUSED(func);
@@ -127,7 +127,7 @@ static int cmp_filenames(char16_t* upcase, u16string_view fn1, u16string_view fn
 }
 
 static EFI_STATUS find_file_in_dir(volume* vol, uint64_t dir, u16string_view name, uint64_t* inode) {
-    EFI_STATUS Status;
+    EFI_STATUS Status, Status2;
     FILE_RECORD_SEGMENT_HEADER* file;
     index_root* ir = nullptr;
     LIST_ENTRY index_mappings;
@@ -160,7 +160,7 @@ static EFI_STATUS find_file_in_dir(volume* vol, uint64_t dir, u16string_view nam
         return Status;
     }
 
-    loop_through_atts(file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view res_data, u16string_view att_name) -> bool {
+    Status2 = loop_through_atts(file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view res_data, u16string_view att_name) -> bool {
         switch (att.TypeCode) {
             case ntfs_attribute::INDEX_ALLOCATION:
                 if (att_name == u"$I30" && att.FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
@@ -186,6 +186,9 @@ static EFI_STATUS find_file_in_dir(volume* vol, uint64_t dir, u16string_view nam
 
         return true;
     });
+
+    if (EFI_ERROR(Status2))
+        Status = Status2;
 
     if (EFI_ERROR(Status))
         goto end;
@@ -864,7 +867,7 @@ static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
 }
 
 static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
-    EFI_STATUS Status;
+    EFI_STATUS Status, Status2;
     uint64_t start, end;
 
     if (ino->position >= ino->size || *BufferSize == 0) {
@@ -909,7 +912,7 @@ static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
 
         Status = EFI_SUCCESS;
 
-        loop_through_atts(file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view data, u16string_view att_name) -> bool {
+        Status2 = loop_through_atts(file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view data, u16string_view att_name) -> bool {
             if (att.TypeCode == ntfs_attribute::DATA && att_name.empty()) {
                 switch (att.FormCode) {
                     case NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM:
@@ -936,6 +939,9 @@ static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
         });
 
         bs->FreePool(file);
+
+        if (EFI_ERROR(Status2))
+            return Status2;
 
         if (EFI_ERROR(Status))
             return Status;
@@ -1069,7 +1075,8 @@ static EFI_STATUS EFIAPI file_get_position(struct _EFI_FILE_HANDLE* File, UINT64
     return EFI_UNSUPPORTED;
 }
 
-static void loop_through_atts(const FILE_RECORD_SEGMENT_HEADER* file_record, invocable<const ATTRIBUTE_RECORD_HEADER&, string_view, u16string_view> auto func) {
+static EFI_STATUS loop_through_atts(const FILE_RECORD_SEGMENT_HEADER* file_record,
+                                    invocable<const ATTRIBUTE_RECORD_HEADER&, string_view, u16string_view> auto func) {
     auto att = reinterpret_cast<const ATTRIBUTE_RECORD_HEADER*>((uint8_t*)file_record + file_record->FirstAttributeOffset);
     size_t offset = file_record->FirstAttributeOffset;
 
@@ -1092,11 +1099,13 @@ static void loop_through_atts(const FILE_RECORD_SEGMENT_HEADER* file_record, inv
             name = u16string_view((char16_t*)((uint8_t*)file_record + offset + att->NameOffset), att->NameLength);
 
         if (!func(*att, data, name))
-            return;
+            return EFI_SUCCESS;
 
         offset += att->RecordLength;
         att = reinterpret_cast<const ATTRIBUTE_RECORD_HEADER*>((uint8_t*)att + att->RecordLength);
     }
+
+    return EFI_SUCCESS;
 }
 
 static EFI_STATUS read_mappings(volume* vol, const ATTRIBUTE_RECORD_HEADER& att, LIST_ENTRY* mappings) {
@@ -1194,7 +1203,7 @@ static EFI_STATUS read_mappings(volume* vol, const ATTRIBUTE_RECORD_HEADER& att,
 }
 
 static EFI_STATUS load_inode(inode* ino) {
-    EFI_STATUS Status;
+    EFI_STATUS Status, Status2;
     FILE_RECORD_SEGMENT_HEADER* file;
 
     InitializeListHead(&ino->index_mappings);
@@ -1229,7 +1238,7 @@ static EFI_STATUS load_inode(inode* ino) {
 
     Status = EFI_SUCCESS;
 
-    loop_through_atts(file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view res_data, u16string_view att_name) -> bool {
+    Status2 = loop_through_atts(file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view res_data, u16string_view att_name) -> bool {
         switch (att.TypeCode) {
             case ntfs_attribute::STANDARD_INFORMATION:
                 if (att.FormCode == NTFS_ATTRIBUTE_FORM::RESIDENT_FORM) {
@@ -1295,6 +1304,9 @@ static EFI_STATUS load_inode(inode* ino) {
 
         return true;
     });
+
+    if (EFI_ERROR(Status2))
+        Status = Status2;
 
     if (EFI_ERROR(Status)) {
         if (ino->index_root) {
@@ -1425,7 +1437,7 @@ static EFI_STATUS EFIAPI open_volume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* This, EFI_
 }
 
 static EFI_STATUS read_mft(volume* vol) {
-    EFI_STATUS Status;
+    EFI_STATUS Status, Status2;
     FILE_RECORD_SEGMENT_HEADER* mft;
 
     Status = bs->AllocatePool(EfiBootServicesData, vol->file_record_size, (void**)&mft);
@@ -1456,7 +1468,7 @@ static EFI_STATUS read_mft(volume* vol) {
 
     Status = EFI_INVALID_PARAMETER;
 
-    loop_through_atts(mft, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view, u16string_view att_name) -> bool {
+    Status2 = loop_through_atts(mft, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view, u16string_view att_name) -> bool {
         if (att.TypeCode == ntfs_attribute::DATA && att_name.empty()) {
             Status = read_mappings(vol, att, &vol->mft_mappings);
             return false;
@@ -1466,6 +1478,9 @@ static EFI_STATUS read_mft(volume* vol) {
     });
 
     bs->FreePool(mft);
+
+    if (EFI_ERROR(Status2))
+        return Status2;
 
     return Status;
 }
@@ -1481,7 +1496,7 @@ volume::~volume() {
 }
 
 static EFI_STATUS read_upcase(volume* vol) {
-    EFI_STATUS Status;
+    EFI_STATUS Status, Status2;
     FILE_RECORD_SEGMENT_HEADER* file;
     LIST_ENTRY mappings;
     uint64_t size;
@@ -1512,7 +1527,7 @@ static EFI_STATUS read_upcase(volume* vol) {
         return Status;
     }
 
-    loop_through_atts(file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view, u16string_view att_name) -> bool {
+    Status2 = loop_through_atts(file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view, u16string_view att_name) -> bool {
         switch (att.TypeCode) {
             case ntfs_attribute::DATA:
                 // assuming that $UpCase DATA can never be resident
@@ -1529,6 +1544,9 @@ static EFI_STATUS read_upcase(volume* vol) {
 
         return true;
     });
+
+    if (EFI_ERROR(Status2))
+        return Status2;
 
     if (EFI_ERROR(Status))
         return Status;
