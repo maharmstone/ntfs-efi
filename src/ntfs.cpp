@@ -1,6 +1,7 @@
 #include <efi.h>
 #include <string.h>
 #include <string_view>
+#include <optional>
 #include <uchar.h>
 #include "ntfs.h"
 
@@ -1197,8 +1198,6 @@ static EFI_STATUS loop_through_atts(volume* vol, uint64_t inode, const FILE_RECO
                         offset += att->RecordLength;
                         att = reinterpret_cast<const ATTRIBUTE_RECORD_HEADER*>((uint8_t*)att + att->RecordLength);
                     }
-                } else {
-                    // FIXME - other inodes
                 }
 
                 if (left <= ent->record_length)
@@ -1206,6 +1205,120 @@ static EFI_STATUS loop_through_atts(volume* vol, uint64_t inode, const FILE_RECO
 
                 left -= ent->record_length;
                 ent = (const attribute_list_entry*)((uint8_t*)ent + ent->record_length);
+            }
+        }
+
+        while (true) {
+            auto ent = (attribute_list_entry*)attlist;
+            size_t left = attlist_size;
+            optional<uint64_t> ref;
+            FILE_RECORD_SEGMENT_HEADER* file2 = nullptr;
+
+            while (true) {
+                uint64_t file_reference = ent->file_reference.SegmentNumber;
+
+                // skip entries already handled
+                if (file_reference == inode) {
+                    if (left <= ent->record_length)
+                        break;
+
+                    left -= ent->record_length;
+                    ent = (attribute_list_entry*)((uint8_t*)ent + ent->record_length);
+                    continue;
+                }
+
+                if (ref.has_value() && *ref != file_reference) {
+                    if (left <= ent->record_length)
+                        break;
+
+                    left -= ent->record_length;
+                    ent = (attribute_list_entry*)((uint8_t*)ent + ent->record_length);
+                    continue;
+                }
+
+                if (!ref.has_value()) {
+                    ref = file_reference;
+
+                    Status = bs->AllocatePool(EfiBootServicesData, vol->file_record_size, (void**)&file2);
+                    if (EFI_ERROR(Status)) {
+                        do_print_error("AllocatePool", Status);
+                        bs->FreePool(attlist);
+                        return Status;
+                    }
+
+                    Status = read_from_mappings(vol, &vol->mft_mappings, file_reference * vol->file_record_size,
+                                                (uint8_t*)file2, vol->file_record_size);
+                    if (EFI_ERROR(Status)) {
+                        do_print_error("read_from_mappings", Status);
+                        bs->FreePool(file2);
+                        bs->FreePool(attlist);
+                        return Status;
+                    }
+
+                    if (file2->MultiSectorHeader.Signature != NTFS_FILE_SIGNATURE) {
+                        bs->FreePool(file2);
+                        bs->FreePool(attlist);
+                        return EFI_INVALID_PARAMETER;
+                    }
+
+                    Status = process_fixups(&file2->MultiSectorHeader, vol->file_record_size,
+                                            vol->boot_sector->BytesPerSector);
+
+                    if (EFI_ERROR(Status)) {
+                        bs->FreePool(file2);
+                        bs->FreePool(attlist);
+                        return Status;
+                    }
+                }
+
+                att = reinterpret_cast<const ATTRIBUTE_RECORD_HEADER*>((uint8_t*)file2 + file2->FirstAttributeOffset);
+                offset = file2->FirstAttributeOffset;
+
+                while (true) {
+                    if (att->TypeCode == (enum ntfs_attribute)0xffffffff || att->RecordLength == 0)
+                        break;
+
+                    if (att->TypeCode == ent->type && att->NameLength == ent->name_length && att->Instance == ent->instance) {
+                        if (att->NameLength == 0 || !memcmp((uint8_t*)file2 + offset + att->NameOffset, (uint8_t*)ent + ent->name_offset, att->NameLength * sizeof(char16_t))) {
+                            string_view data;
+                            u16string_view name;
+
+                            if (att->FormCode == NTFS_ATTRIBUTE_FORM::RESIDENT_FORM)
+                                data = string_view((const char*)file2 + offset + att->Form.Resident.ValueOffset, att->Form.Resident.ValueLength);
+
+                            if (att->NameLength != 0)
+                                name = u16string_view((char16_t*)((uint8_t*)file2 + offset + att->NameOffset), att->NameLength);
+
+                            if (!func(*att, data, name)) {
+                                bs->FreePool(file2);
+                                bs->FreePool(attlist);
+                                return EFI_SUCCESS;
+                            }
+
+                            break;
+                        }
+                    }
+
+                    offset += att->RecordLength;
+                    att = reinterpret_cast<const ATTRIBUTE_RECORD_HEADER*>((uint8_t*)att + att->RecordLength);
+                }
+
+                // don't process this again
+                ent->file_reference.SegmentNumber = inode;
+
+                if (left <= ent->record_length)
+                    break;
+
+                left -= ent->record_length;
+                ent = (attribute_list_entry*)((uint8_t*)ent + ent->record_length);
+            }
+
+            if (file2)
+                bs->FreePool(file2);
+
+            if (!ref.has_value()) {
+                bs->FreePool(attlist);
+                return EFI_SUCCESS;
             }
         }
 
