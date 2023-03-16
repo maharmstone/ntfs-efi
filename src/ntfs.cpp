@@ -1493,18 +1493,22 @@ static EFI_STATUS load_inode(inode* ino) {
     InitializeListHead(&ino->data_mappings);
 
     Status = bs->AllocatePool(EfiBootServicesData, ino->vol.file_record_size, (void**)&file);
-    if (EFI_ERROR(Status))
+    if (EFI_ERROR(Status)) {
+        do_print_error("AllocatePool", Status);
         return Status;
+    }
 
     Status = read_from_mappings(ino->vol, &ino->vol.mft_mappings, ino->ino * ino->vol.file_record_size,
                                 (uint8_t*)file, ino->vol.file_record_size);
     if (EFI_ERROR(Status)) {
         bs->FreePool(file);
+        do_print_error("read_from_mappings", Status);
         return Status;
     }
 
     if (file->MultiSectorHeader.Signature != NTFS_FILE_SIGNATURE) {
         bs->FreePool(file);
+        // FIXME - print error
         return EFI_INVALID_PARAMETER;
     }
 
@@ -1513,6 +1517,7 @@ static EFI_STATUS load_inode(inode* ino) {
 
     if (EFI_ERROR(Status)) {
         bs->FreePool(file);
+        do_print_error("process_fixups", Status);
         return Status;
     }
 
@@ -1549,16 +1554,20 @@ static EFI_STATUS load_inode(inode* ino) {
                     ino->phys_size = att.Form.Nonresident.AllocatedLength;
 
                     Status = read_mappings(ino->vol, att, &ino->index_mappings);
-                    if (EFI_ERROR(Status))
+                    if (EFI_ERROR(Status)) {
+                        do_print_error("read_mappings", Status);
                         return false;
+                    }
                 }
             break;
 
             case ntfs_attribute::INDEX_ROOT:
                 if (att_name == u"$I30" && att.FormCode == NTFS_ATTRIBUTE_FORM::RESIDENT_FORM && !res_data.empty() && !ino->index_root) {
                     Status = bs->AllocatePool(EfiBootServicesData, res_data.size(), (void**)&ino->index_root);
-                    if (EFI_ERROR(Status))
+                    if (EFI_ERROR(Status)) {
+                        do_print_error("AllocatePool", Status);
                         return false;
+                    }
 
                     memcpy(ino->index_root, res_data.data(), res_data.size());
                 }
@@ -1587,8 +1596,10 @@ static EFI_STATUS load_inode(inode* ino) {
         return true;
     });
 
-    if (EFI_ERROR(Status2))
+    if (EFI_ERROR(Status2)) {
+        do_print_error("loop_through_atts", Status2);
         Status = Status2;
+    }
 
     if (EFI_ERROR(Status)) {
         if (ino->index_root) {
