@@ -932,6 +932,7 @@ static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
 
         if (file->MultiSectorHeader.Signature != NTFS_FILE_SIGNATURE) {
             bs->FreePool(file);
+            // FIXME - print error
             return EFI_INVALID_PARAMETER;
         }
 
@@ -965,8 +966,10 @@ static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
 
         bs->FreePool(file);
 
-        if (EFI_ERROR(Status2))
+        if (EFI_ERROR(Status2)) {
+            do_print_error("loop_through_atts", Status2);
             return Status2;
+        }
 
         if (EFI_ERROR(Status))
             return Status;
