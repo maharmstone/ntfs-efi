@@ -631,8 +631,10 @@ static EFI_STATUS read_from_mappings(const volume& vol, const LIST_ENTRY* mappin
                 Status = vol.block->ReadBlocks(vol.block, vol.block->Media->MediaId,
                                                 ((m->lcn * cluster_size) + mapping_offset) / vol.block->Media->BlockSize,
                                                 to_read, buf);
-                if (EFI_ERROR(Status))
+                if (EFI_ERROR(Status)) {
+                    do_print_error("ReadBlocks", Status);
                     return Status;
+                }
             }
 
             if (to_read == size)
