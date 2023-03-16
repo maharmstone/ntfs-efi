@@ -275,7 +275,7 @@ static EFI_STATUS find_file_in_dir(const volume& vol, uint64_t dir, u16string_vi
             auto rec = reinterpret_cast<index_record*>(scratch);
 
             if (rec->MultiSectorHeader.Signature != INDEX_RECORD_MAGIC) {
-                // FIXME - print error
+                do_print("Signature was not INDX\n");
                 Status = EFI_INVALID_PARAMETER;
                 goto end;
             }
@@ -726,8 +726,8 @@ static EFI_STATUS next_index_item(inode* ino, const invocable<string_view> auto&
             auto rec = reinterpret_cast<index_record*>(l2->data);
 
             if (rec->MultiSectorHeader.Signature != INDEX_RECORD_MAGIC) {
+                do_print("Signature was not INDX\n");
                 bs->FreePool(l2);
-                // FIXME - print error
                 return EFI_INVALID_PARAMETER;
             }
 
