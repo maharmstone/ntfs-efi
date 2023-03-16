@@ -1808,18 +1808,22 @@ static EFI_STATUS read_upcase(volume& vol) {
     InitializeListHead(&mappings);
 
     Status = bs->AllocatePool(EfiBootServicesData, vol.file_record_size, (void**)&file);
-    if (EFI_ERROR(Status))
+    if (EFI_ERROR(Status)) {
+        do_print_error("AllocatePool", Status);
         return Status;
+    }
 
     Status = read_from_mappings(vol, &vol.mft_mappings, NTFS_UPCASE_INODE * vol.file_record_size,
                                 (uint8_t*)file, vol.file_record_size);
     if (EFI_ERROR(Status)) {
         bs->FreePool(file);
+        do_print_error("read_from_mappings", Status);
         return Status;
     }
 
     if (file->MultiSectorHeader.Signature != NTFS_FILE_SIGNATURE) {
         bs->FreePool(file);
+        // FIXME - report error
         return EFI_INVALID_PARAMETER;
     }
 
@@ -1828,6 +1832,7 @@ static EFI_STATUS read_upcase(volume& vol) {
 
     if (EFI_ERROR(Status)) {
         bs->FreePool(file);
+        do_print_error("process_fixups", Status);
         return Status;
     }
 
@@ -1838,6 +1843,10 @@ static EFI_STATUS read_upcase(volume& vol) {
                 if (att_name.empty() && att.FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
                     size = att.Form.Nonresident.AllocatedLength;
                     Status = read_mappings(vol, att, &mappings);
+
+                    if (EFI_ERROR(Status))
+                        do_print_error("read_mappings", Status);
+
                     return false;
                 }
             break;
@@ -1849,13 +1858,18 @@ static EFI_STATUS read_upcase(volume& vol) {
         return true;
     });
 
-    if (EFI_ERROR(Status2))
+    if (EFI_ERROR(Status2)) {
+        do_print_error("loop_through_atts", Status2);
         return Status2;
+    }
 
     if (EFI_ERROR(Status))
         return Status;
 
     Status = read_from_mappings(vol, &mappings, 0, (uint8_t*)vol.upcase, min(size, sizeof(vol.upcase)));
+
+    if (EFI_ERROR(Status))
+        do_print_error("read_from_mappings", Status);
 
     while (!IsListEmpty(&mappings)) {
         mapping* m = _CR(mappings.Flink, mapping, list_entry);
