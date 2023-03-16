@@ -31,11 +31,12 @@ struct volume {
 };
 
 struct inode {
+    inode(volume& vol) : vol(vol) { }
     ~inode();
 
     EFI_FILE_PROTOCOL proto;
-    uint64_t inode;
-    volume* vol;
+    uint64_t ino;
+    volume& vol;
     bool inode_loaded;
     STANDARD_INFORMATION standard_info;
     uint64_t size;
@@ -450,7 +451,7 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
         name = nullptr;
         name_len = 0;
     } else if (FileName[0] == L'.' && FileName[1] == 0) {
-        inode_num = file->inode;
+        inode_num = file->ino;
 
         if (file->name) {
             Status = bs->AllocatePool(EfiBootServicesData, file->name_len * sizeof(char16_t), (void**)&name);
@@ -491,7 +492,7 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
                 else
                     part = fn;
 
-                Status = find_file_in_dir(file->vol, inode_num, part, &inode_num);
+                Status = find_file_in_dir(&file->vol, inode_num, part, &inode_num);
 
                 if (Status == EFI_NOT_FOUND) {
                     if (name)
@@ -527,10 +528,11 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 
     memset(ino, 0, sizeof(inode));
 
+    new (ino) inode(file->vol);
+
     populate_file_handle(&ino->proto);
 
-    ino->inode = inode_num;
-    ino->vol = file->vol;
+    ino->ino = inode_num;
     ino->name = name;
     ino->name_len = name_len;
 
@@ -672,17 +674,17 @@ static EFI_STATUS next_index_item(inode* ino, const invocable<string_view> auto&
             btree_level* l2;
             uint64_t vcn = ((MFT_SEGMENT_REFERENCE*)((uint8_t*)l->ent + l->ent->entry_length - sizeof(uint64_t)))->SegmentNumber;
 
-            if (ir.bytes_per_index_record < ino->vol->boot_sector->BytesPerSector * ino->vol->boot_sector->SectorsPerCluster)
-                vcn *= ino->vol->boot_sector->BytesPerSector;
+            if (ir.bytes_per_index_record < ino->vol.boot_sector->BytesPerSector * ino->vol.boot_sector->SectorsPerCluster)
+                vcn *= ino->vol.boot_sector->BytesPerSector;
             else
-                vcn *= (uint64_t)ino->vol->boot_sector->BytesPerSector * (uint64_t)ino->vol->boot_sector->SectorsPerCluster;
+                vcn *= (uint64_t)ino->vol.boot_sector->BytesPerSector * (uint64_t)ino->vol.boot_sector->SectorsPerCluster;
 
             Status = bs->AllocatePool(EfiBootServicesData, offsetof(btree_level, data) + ir.bytes_per_index_record,
                                       (void**)&l2);
             if (EFI_ERROR(Status))
                 return Status;
 
-            Status = read_from_mappings(ino->vol, &ino->index_mappings, vcn, l2->data, ir.bytes_per_index_record);
+            Status = read_from_mappings(&ino->vol, &ino->index_mappings, vcn, l2->data, ir.bytes_per_index_record);
             if (EFI_ERROR(Status)) {
                 bs->FreePool(l2);
                 return Status;
@@ -696,7 +698,7 @@ static EFI_STATUS next_index_item(inode* ino, const invocable<string_view> auto&
             }
 
             Status = process_fixups(&rec->MultiSectorHeader, ir.bytes_per_index_record,
-                                    ino->vol->boot_sector->BytesPerSector);
+                                    ino->vol.boot_sector->BytesPerSector);
             if (EFI_ERROR(Status)) {
                 bs->FreePool(l2);
                 return EFI_INVALID_PARAMETER;
@@ -892,14 +894,14 @@ static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
     if (!ino->data_loaded) {
         FILE_RECORD_SEGMENT_HEADER* file;
 
-        Status = bs->AllocatePool(EfiBootServicesData, ino->vol->file_record_size, (void**)&file);
+        Status = bs->AllocatePool(EfiBootServicesData, ino->vol.file_record_size, (void**)&file);
         if (EFI_ERROR(Status)) {
             do_print_error("AllocatePool", Status);
             return Status;
         }
 
-        Status = read_from_mappings(ino->vol, &ino->vol->mft_mappings, ino->inode * ino->vol->file_record_size,
-                                    (uint8_t*)file, ino->vol->file_record_size);
+        Status = read_from_mappings(&ino->vol, &ino->vol.mft_mappings, ino->ino * ino->vol.file_record_size,
+                                    (uint8_t*)file, ino->vol.file_record_size);
         if (EFI_ERROR(Status)) {
             do_print_error("read_from_mappings", Status);
             bs->FreePool(file);
@@ -913,11 +915,11 @@ static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
 
         Status = EFI_SUCCESS;
 
-        Status2 = loop_through_atts(ino->vol, ino->inode, file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view data, u16string_view att_name) -> bool {
+        Status2 = loop_through_atts(&ino->vol, ino->ino, file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view data, u16string_view att_name) -> bool {
             if (att.TypeCode == ntfs_attribute::DATA && att_name.empty()) {
                 switch (att.FormCode) {
                     case NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM:
-                        Status = read_mappings(ino->vol, att, &ino->data_mappings);
+                        Status = read_mappings(&ino->vol, att, &ino->data_mappings);
                         if (EFI_ERROR(Status))
                             do_print_error("read_mappings", Status);
                         break;
@@ -967,8 +969,8 @@ static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
         if (valid_end > ino->vdl)
             valid_end = ino->vdl;
 
-        start_aligned = start & ~(ino->vol->boot_sector->BytesPerSector - 1);
-        end_aligned = sector_align(valid_end, ino->vol->boot_sector->BytesPerSector);
+        start_aligned = start & ~(ino->vol.boot_sector->BytesPerSector - 1);
+        end_aligned = sector_align(valid_end, ino->vol.boot_sector->BytesPerSector);
 
         if (start_aligned != start || end_aligned != valid_end) {
             Status = bs->AllocatePool(EfiBootServicesData, end_aligned - start_aligned, (void**)&tmp);
@@ -980,7 +982,7 @@ static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
 
         // FIXME - compressed data (LZNT1 and WOF)
 
-        Status = read_from_mappings(ino->vol, &ino->data_mappings, start_aligned,
+        Status = read_from_mappings(&ino->vol, &ino->data_mappings, start_aligned,
                                     tmp ? tmp : (uint8_t*)Buffer, end_aligned - start_aligned);
         if (EFI_ERROR(Status)) {
             do_print_error("read_from_mappings", Status);
@@ -1455,12 +1457,12 @@ static EFI_STATUS load_inode(inode* ino) {
     InitializeListHead(&ino->levels);
     InitializeListHead(&ino->data_mappings);
 
-    Status = bs->AllocatePool(EfiBootServicesData, ino->vol->file_record_size, (void**)&file);
+    Status = bs->AllocatePool(EfiBootServicesData, ino->vol.file_record_size, (void**)&file);
     if (EFI_ERROR(Status))
         return Status;
 
-    Status = read_from_mappings(ino->vol, &ino->vol->mft_mappings, ino->inode * ino->vol->file_record_size,
-                                (uint8_t*)file, ino->vol->file_record_size);
+    Status = read_from_mappings(&ino->vol, &ino->vol.mft_mappings, ino->ino * ino->vol.file_record_size,
+                                (uint8_t*)file, ino->vol.file_record_size);
     if (EFI_ERROR(Status)) {
         bs->FreePool(file);
         return Status;
@@ -1471,8 +1473,8 @@ static EFI_STATUS load_inode(inode* ino) {
         return EFI_INVALID_PARAMETER;
     }
 
-    Status = process_fixups(&file->MultiSectorHeader, ino->vol->file_record_size,
-                            ino->vol->boot_sector->BytesPerSector);
+    Status = process_fixups(&file->MultiSectorHeader, ino->vol.file_record_size,
+                            ino->vol.boot_sector->BytesPerSector);
 
     if (EFI_ERROR(Status)) {
         bs->FreePool(file);
@@ -1483,7 +1485,7 @@ static EFI_STATUS load_inode(inode* ino) {
 
     Status = EFI_SUCCESS;
 
-    Status2 = loop_through_atts(ino->vol, ino->inode, file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view res_data, u16string_view att_name) -> bool {
+    Status2 = loop_through_atts(&ino->vol, ino->ino, file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view res_data, u16string_view att_name) -> bool {
         switch (att.TypeCode) {
             case ntfs_attribute::STANDARD_INFORMATION:
                 if (att.FormCode == NTFS_ATTRIBUTE_FORM::RESIDENT_FORM) {
@@ -1511,7 +1513,7 @@ static EFI_STATUS load_inode(inode* ino) {
                     ino->size = att.Form.Nonresident.FileSize;
                     ino->phys_size = att.Form.Nonresident.AllocatedLength;
 
-                    Status = read_mappings(ino->vol, att, &ino->index_mappings);
+                    Status = read_mappings(&ino->vol, att, &ino->index_mappings);
                     if (EFI_ERROR(Status))
                         return false;
                 }
@@ -1671,10 +1673,11 @@ static EFI_STATUS EFIAPI open_volume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* This, EFI_
 
     memset(ino, 0, sizeof(inode));
 
+    new (ino) inode(*vol);
+
     populate_file_handle(&ino->proto);
 
-    ino->inode = NTFS_ROOT_DIR_INODE;
-    ino->vol = vol;
+    ino->ino = NTFS_ROOT_DIR_INODE;
 
     *Root = &ino->proto;
 
