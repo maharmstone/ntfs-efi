@@ -103,7 +103,7 @@ static EFI_STATUS drv_supported(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE Co
                             ControllerHandle, EFI_OPEN_PROTOCOL_TEST_PROTOCOL);
 }
 
-static int cmp_filenames(char16_t* upcase, u16string_view fn1, u16string_view fn2) {
+static int cmp_filenames(const char16_t* upcase, u16string_view fn1, u16string_view fn2) {
     // FIXME - what about directories with case-sensitivity flag set?
 
     while (!fn1.empty() && !fn2.empty()) {
@@ -128,7 +128,7 @@ static int cmp_filenames(char16_t* upcase, u16string_view fn1, u16string_view fn
     return 0;
 }
 
-static EFI_STATUS find_file_in_dir(volume* vol, uint64_t dir, u16string_view name, uint64_t* inode) {
+static EFI_STATUS find_file_in_dir(const volume& vol, uint64_t dir, u16string_view name, uint64_t* inode) {
     EFI_STATUS Status, Status2;
     FILE_RECORD_SEGMENT_HEADER* file;
     index_root* ir = nullptr;
@@ -138,12 +138,12 @@ static EFI_STATUS find_file_in_dir(volume* vol, uint64_t dir, u16string_view nam
 
     InitializeListHead(&index_mappings);
 
-    Status = bs->AllocatePool(EfiBootServicesData, vol->file_record_size, (void**)&file);
+    Status = bs->AllocatePool(EfiBootServicesData, vol.file_record_size, (void**)&file);
     if (EFI_ERROR(Status))
         return Status;
 
-    Status = read_from_mappings(*vol, &vol->mft_mappings, dir * vol->file_record_size,
-                                (uint8_t*)file, vol->file_record_size);
+    Status = read_from_mappings(vol, &vol.mft_mappings, dir * vol.file_record_size,
+                                (uint8_t*)file, vol.file_record_size);
     if (EFI_ERROR(Status)) {
         bs->FreePool(file);
         return Status;
@@ -154,19 +154,19 @@ static EFI_STATUS find_file_in_dir(volume* vol, uint64_t dir, u16string_view nam
         return EFI_INVALID_PARAMETER;
     }
 
-    Status = process_fixups(&file->MultiSectorHeader, vol->file_record_size,
-                            vol->boot_sector->BytesPerSector);
+    Status = process_fixups(&file->MultiSectorHeader, vol.file_record_size,
+                            vol.boot_sector->BytesPerSector);
 
     if (EFI_ERROR(Status)) {
         bs->FreePool(file);
         return Status;
     }
 
-    Status2 = loop_through_atts(*vol, dir, file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view res_data, u16string_view att_name) -> bool {
+    Status2 = loop_through_atts(vol, dir, file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view res_data, u16string_view att_name) -> bool {
         switch (att.TypeCode) {
             case ntfs_attribute::INDEX_ALLOCATION:
                 if (att_name == u"$I30" && att.FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
-                    Status = read_mappings(*vol, att, &index_mappings);
+                    Status = read_mappings(vol, att, &index_mappings);
                     if (EFI_ERROR(Status))
                         return false;
                 }
@@ -209,7 +209,7 @@ static EFI_STATUS find_file_in_dir(volume* vol, uint64_t dir, u16string_view nam
             const auto& fn = *(FILE_NAME*)data.data();
             u16string_view ent_name(fn.FileName, fn.FileNameLength);
 
-            auto cmp = cmp_filenames(vol->upcase, name, ent_name);
+            auto cmp = cmp_filenames(vol.upcase, name, ent_name);
 
             if (cmp == 0) { // found
                 *inode = ent->file_reference.SegmentNumber;
@@ -229,10 +229,10 @@ static EFI_STATUS find_file_in_dir(volume* vol, uint64_t dir, u16string_view nam
         if (ent->flags & INDEX_ENTRY_SUBNODE) { // if subnode, descend
             uint64_t vcn = ((MFT_SEGMENT_REFERENCE*)((uint8_t*)ent + ent->entry_length - sizeof(uint64_t)))->SegmentNumber;
 
-            if (ir->bytes_per_index_record < vol->boot_sector->BytesPerSector * vol->boot_sector->SectorsPerCluster)
-                vcn *= vol->boot_sector->BytesPerSector;
+            if (ir->bytes_per_index_record < vol.boot_sector->BytesPerSector * vol.boot_sector->SectorsPerCluster)
+                vcn *= vol.boot_sector->BytesPerSector;
             else
-                vcn *= (uint64_t)vol->boot_sector->BytesPerSector * (uint64_t)vol->boot_sector->SectorsPerCluster;
+                vcn *= (uint64_t)vol.boot_sector->BytesPerSector * (uint64_t)vol.boot_sector->SectorsPerCluster;
 
             if (!scratch) {
                 Status = bs->AllocatePool(EfiBootServicesData, ir->bytes_per_index_record,
@@ -241,7 +241,7 @@ static EFI_STATUS find_file_in_dir(volume* vol, uint64_t dir, u16string_view nam
                     goto end;
             }
 
-            Status = read_from_mappings(*vol, &index_mappings, vcn, scratch, ir->bytes_per_index_record);
+            Status = read_from_mappings(vol, &index_mappings, vcn, scratch, ir->bytes_per_index_record);
             if (EFI_ERROR(Status))
                 goto end;
 
@@ -253,7 +253,7 @@ static EFI_STATUS find_file_in_dir(volume* vol, uint64_t dir, u16string_view nam
             }
 
             Status = process_fixups(&rec->MultiSectorHeader, ir->bytes_per_index_record,
-                                    vol->boot_sector->BytesPerSector);
+                                    vol.boot_sector->BytesPerSector);
             if (EFI_ERROR(Status)) {
                 Status = EFI_INVALID_PARAMETER;
                 goto end;
@@ -492,7 +492,7 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
                 else
                     part = fn;
 
-                Status = find_file_in_dir(&file->vol, inode_num, part, &inode_num);
+                Status = find_file_in_dir(file->vol, inode_num, part, &inode_num);
 
                 if (Status == EFI_NOT_FOUND) {
                     if (name)
