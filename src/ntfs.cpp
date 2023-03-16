@@ -1389,14 +1389,20 @@ static EFI_STATUS read_mappings(const volume& vol, const ATTRIBUTE_RECORD_HEADER
     uint8_t* stream;
     uint64_t max_cluster;
 
-    if (att.FormCode != NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM)
+    if (att.FormCode != NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
+        // FIXME - print error
         return EFI_INVALID_PARAMETER;
+    }
 
-    if (att.Flags & ATTRIBUTE_FLAG_ENCRYPTED)
+    if (att.Flags & ATTRIBUTE_FLAG_ENCRYPTED) {
+        // FIXME - print error
         return EFI_INVALID_PARAMETER;
+    }
 
-    if (att.Flags & ATTRIBUTE_FLAG_COMPRESSION_MASK)
+    if (att.Flags & ATTRIBUTE_FLAG_COMPRESSION_MASK) {
+        // FIXME - print error
         return EFI_INVALID_PARAMETER;
+    }
 
     next_vcn = att.Form.Nonresident.LowestVcn;
     stream = (uint8_t*)&att + att.Form.Nonresident.MappingPairsOffset;
@@ -1443,8 +1449,10 @@ static EFI_STATUS read_mappings(const volume& vol, const ATTRIBUTE_RECORD_HEADER
         next_vcn += v_val;
 
         Status = bs->AllocatePool(EfiBootServicesData, sizeof(mapping), (void**)&m);
-        if (EFI_ERROR(Status))
+        if (EFI_ERROR(Status)) {
+            do_print_error("AllocatePool", Status);
             return Status;
+        }
 
         if (l != 0) {
             l_val = *(int64_t*)stream;
