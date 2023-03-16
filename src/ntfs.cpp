@@ -1402,17 +1402,17 @@ static EFI_STATUS read_mappings(const volume& vol, const ATTRIBUTE_RECORD_HEADER
     uint64_t max_cluster;
 
     if (att.FormCode != NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
-        // FIXME - print error
+        do_print("Cannot read mappings for attribute that is not non-resident\n");
         return EFI_INVALID_PARAMETER;
     }
 
     if (att.Flags & ATTRIBUTE_FLAG_ENCRYPTED) {
-        // FIXME - print error
+        do_print("Cannot read encrypted data\n");
         return EFI_INVALID_PARAMETER;
     }
 
     if (att.Flags & ATTRIBUTE_FLAG_COMPRESSION_MASK) {
-        // FIXME - print error
+        do_print("Compression not yet supported\n");
         return EFI_INVALID_PARAMETER;
     }
 
