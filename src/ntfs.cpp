@@ -883,8 +883,10 @@ static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
         return EFI_SUCCESS;
     }
 
-    if (EFI_ERROR(Status))
+    if (EFI_ERROR(Status)) {
+        do_print_error("next_index_item", Status);
         return Status;
+    }
 
     return EFI_SUCCESS;
 }
