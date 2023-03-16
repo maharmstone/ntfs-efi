@@ -165,7 +165,7 @@ static EFI_STATUS find_file_in_dir(const volume& vol, uint64_t dir, u16string_vi
     }
 
     if (file->MultiSectorHeader.Signature != NTFS_FILE_SIGNATURE) {
-        // FIXME - print error
+        do_print("Signature was not FILE\n");
         bs->FreePool(file);
         return EFI_INVALID_PARAMETER;
     }
@@ -943,8 +943,8 @@ static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
         }
 
         if (file->MultiSectorHeader.Signature != NTFS_FILE_SIGNATURE) {
+            do_print("Signature was not FILE\n");
             bs->FreePool(file);
-            // FIXME - print error
             return EFI_INVALID_PARAMETER;
         }
 
@@ -1295,7 +1295,7 @@ static EFI_STATUS loop_through_atts(const volume& vol, uint64_t inode, const FIL
                     }
 
                     if (file2->MultiSectorHeader.Signature != NTFS_FILE_SIGNATURE) {
-                        // FIXME - print error
+                        do_print("Signature was not FILE\n");
                         bs->FreePool(file2);
                         bs->FreePool(attlist);
                         return EFI_INVALID_PARAMETER;
@@ -1519,8 +1519,8 @@ static EFI_STATUS load_inode(inode* ino) {
     }
 
     if (file->MultiSectorHeader.Signature != NTFS_FILE_SIGNATURE) {
+        do_print("Signature was not FILE\n");
         bs->FreePool(file);
-        // FIXME - print error
         return EFI_INVALID_PARAMETER;
     }
 
@@ -1762,8 +1762,8 @@ static EFI_STATUS read_mft(volume& vol) {
     }
 
     if (mft->MultiSectorHeader.Signature != NTFS_FILE_SIGNATURE) {
+        do_print("Signature was not FILE\n");
         bs->FreePool(mft);
-        // FIXME - print error
         return EFI_INVALID_PARAMETER;
     }
 
@@ -1834,8 +1834,8 @@ static EFI_STATUS read_upcase(volume& vol) {
     }
 
     if (file->MultiSectorHeader.Signature != NTFS_FILE_SIGNATURE) {
+        do_print("Signature was not FILE\n");
         bs->FreePool(file);
-        // FIXME - report error
         return EFI_INVALID_PARAMETER;
     }
 
