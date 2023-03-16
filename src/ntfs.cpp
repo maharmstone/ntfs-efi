@@ -1283,6 +1283,7 @@ static EFI_STATUS loop_through_atts(const volume& vol, uint64_t inode, const FIL
                     }
 
                     if (file2->MultiSectorHeader.Signature != NTFS_FILE_SIGNATURE) {
+                        // FIXME - print error
                         bs->FreePool(file2);
                         bs->FreePool(attlist);
                         return EFI_INVALID_PARAMETER;
@@ -1292,6 +1293,7 @@ static EFI_STATUS loop_through_atts(const volume& vol, uint64_t inode, const FIL
                                             vol.boot_sector->BytesPerSector);
 
                     if (EFI_ERROR(Status)) {
+                        do_print_error("process_fixups", Status);
                         bs->FreePool(file2);
                         bs->FreePool(attlist);
                         return Status;
