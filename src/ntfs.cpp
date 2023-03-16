@@ -23,6 +23,7 @@ struct volume {
     ~volume();
 
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL proto;
+    EFI_QUIBBLE_PROTOCOL quibble_proto;
     NTFS_BOOT_SECTOR* boot_sector;
     EFI_HANDLE controller;
     EFI_BLOCK_IO_PROTOCOL* block;
@@ -1892,12 +1893,38 @@ static EFI_STATUS read_upcase(volume& vol) {
     return Status;
 }
 
+static EFI_STATUS EFIAPI get_arc_name(EFI_QUIBBLE_PROTOCOL* This, char* ArcName, UINTN* ArcNameLen) {
+    UNUSED(This);
+    UNUSED(ArcName);
+    UNUSED(ArcNameLen);
+
+    return EFI_UNSUPPORTED;
+}
+
+static EFI_STATUS get_driver_name(EFI_QUIBBLE_PROTOCOL* This, CHAR16* DriverName, UINTN* DriverNameLen) {
+    static constexpr u16string_view name = u"ntfs\0";
+
+    UNUSED(This);
+
+    if (*DriverNameLen < name.length() * sizeof(char16_t)) {
+        *DriverNameLen = name.length() * sizeof(char16_t);
+        return EFI_BUFFER_TOO_SMALL;
+    }
+
+    *DriverNameLen = name.length() * sizeof(char16_t);
+
+    memcpy(DriverName, name.data(), name.length() * sizeof(char16_t));
+
+    return EFI_SUCCESS;
+}
+
 static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE ControllerHandle,
                                    EFI_DEVICE_PATH_PROTOCOL* RemainingDevicePath) {
     EFI_STATUS Status;
     EFI_GUID disk_guid = EFI_DISK_IO_PROTOCOL_GUID;
     EFI_GUID block_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
     EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_GUID quibble_guid = EFI_QUIBBLE_PROTOCOL_GUID;
     EFI_BLOCK_IO_PROTOCOL* block;
     uint32_t sblen;
     NTFS_BOOT_SECTOR* sb;
@@ -1997,11 +2024,13 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
         return Status;
     }
 
-    // FIXME - quibble protocol
+    vol->quibble_proto.GetArcName = get_arc_name;
+    vol->quibble_proto.GetWindowsDriverName = get_driver_name;
 
-    Status = bs->InstallProtocolInterface(&ControllerHandle, &fs_guid, EFI_NATIVE_INTERFACE, &vol->proto);
+    Status = bs->InstallMultipleProtocolInterfaces(&ControllerHandle, &fs_guid, &vol->proto,
+                                                   &quibble_guid, &vol->quibble_proto, nullptr);
     if (EFI_ERROR(Status)) {
-        do_print_error("InstallProtocolInterface", Status);
+        do_print_error("InstallMultipleProtocolInterfaces", Status);
         vol->volume::~volume();
         bs->FreePool(vol);
         bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
