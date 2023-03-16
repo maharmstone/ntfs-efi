@@ -70,7 +70,7 @@ static EFI_STATUS read_from_mappings(const volume& vol, LIST_ENTRY* mappings, ui
                                      uint8_t* buf, uint64_t size);
 static EFI_STATUS process_fixups(MULTI_SECTOR_HEADER* header, uint64_t length,
                                  unsigned int sector_size);
-static EFI_STATUS read_mappings(volume* vol, const ATTRIBUTE_RECORD_HEADER& att,
+static EFI_STATUS read_mappings(const volume& vol, const ATTRIBUTE_RECORD_HEADER& att,
                                 LIST_ENTRY* mappings);
 static EFI_STATUS loop_through_atts(volume* vol, uint64_t inode, const FILE_RECORD_SEGMENT_HEADER* file_record,
                                     invocable<const ATTRIBUTE_RECORD_HEADER&, string_view, u16string_view> auto func);
@@ -166,7 +166,7 @@ static EFI_STATUS find_file_in_dir(volume* vol, uint64_t dir, u16string_view nam
         switch (att.TypeCode) {
             case ntfs_attribute::INDEX_ALLOCATION:
                 if (att_name == u"$I30" && att.FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
-                    Status = read_mappings(vol, att, &index_mappings);
+                    Status = read_mappings(*vol, att, &index_mappings);
                     if (EFI_ERROR(Status))
                         return false;
                 }
@@ -919,7 +919,7 @@ static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
             if (att.TypeCode == ntfs_attribute::DATA && att_name.empty()) {
                 switch (att.FormCode) {
                     case NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM:
-                        Status = read_mappings(&ino->vol, att, &ino->data_mappings);
+                        Status = read_mappings(ino->vol, att, &ino->data_mappings);
                         if (EFI_ERROR(Status))
                             do_print_error("read_mappings", Status);
                         break;
@@ -1109,7 +1109,7 @@ static EFI_STATUS loop_through_atts(volume* vol, uint64_t inode, const FILE_RECO
 
                     InitializeListHead(&mappings);
 
-                    Status = read_mappings(vol, *att, &mappings);
+                    Status = read_mappings(*vol, *att, &mappings);
                     if (EFI_ERROR(Status)) {
                         bs->FreePool(attlist);
                         do_print_error("read_mappings", Status);
@@ -1355,10 +1355,10 @@ static EFI_STATUS loop_through_atts(volume* vol, uint64_t inode, const FILE_RECO
     return EFI_SUCCESS;
 }
 
-static EFI_STATUS read_mappings(volume* vol, const ATTRIBUTE_RECORD_HEADER& att, LIST_ENTRY* mappings) {
+static EFI_STATUS read_mappings(const volume& vol, const ATTRIBUTE_RECORD_HEADER& att, LIST_ENTRY* mappings) {
     EFI_STATUS Status;
     uint64_t next_vcn, current_lcn = 0, current_vcn;
-    uint32_t cluster_size = vol->boot_sector->BytesPerSector * vol->boot_sector->SectorsPerCluster;
+    uint32_t cluster_size = vol.boot_sector->BytesPerSector * vol.boot_sector->SectorsPerCluster;
     uint8_t* stream;
     uint64_t max_cluster;
 
@@ -1513,7 +1513,7 @@ static EFI_STATUS load_inode(inode* ino) {
                     ino->size = att.Form.Nonresident.FileSize;
                     ino->phys_size = att.Form.Nonresident.AllocatedLength;
 
-                    Status = read_mappings(&ino->vol, att, &ino->index_mappings);
+                    Status = read_mappings(ino->vol, att, &ino->index_mappings);
                     if (EFI_ERROR(Status))
                         return false;
                 }
@@ -1718,7 +1718,7 @@ static EFI_STATUS read_mft(volume* vol) {
 
     Status2 = loop_through_atts(vol, NTFS_MFT_INODE, mft, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view, u16string_view att_name) -> bool {
         if (att.TypeCode == ntfs_attribute::DATA && att_name.empty()) {
-            Status = read_mappings(vol, att, &vol->mft_mappings);
+            Status = read_mappings(*vol, att, &vol->mft_mappings);
             return false;
         }
 
@@ -1781,7 +1781,7 @@ static EFI_STATUS read_upcase(volume* vol) {
                 // assuming that $UpCase DATA can never be resident
                 if (att_name.empty() && att.FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
                     size = att.Form.Nonresident.AllocatedLength;
-                    Status = read_mappings(vol, att, &mappings);
+                    Status = read_mappings(*vol, att, &mappings);
                     return false;
                 }
             break;
