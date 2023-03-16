@@ -139,17 +139,21 @@ static EFI_STATUS find_file_in_dir(const volume& vol, uint64_t dir, u16string_vi
     InitializeListHead(&index_mappings);
 
     Status = bs->AllocatePool(EfiBootServicesData, vol.file_record_size, (void**)&file);
-    if (EFI_ERROR(Status))
+    if (EFI_ERROR(Status)) {
+        do_print_error("AllocatePool", Status);
         return Status;
+    }
 
     Status = read_from_mappings(vol, &vol.mft_mappings, dir * vol.file_record_size,
                                 (uint8_t*)file, vol.file_record_size);
     if (EFI_ERROR(Status)) {
         bs->FreePool(file);
+        do_print_error("read_from_mappings", Status);
         return Status;
     }
 
     if (file->MultiSectorHeader.Signature != NTFS_FILE_SIGNATURE) {
+        // FIXME - print error
         bs->FreePool(file);
         return EFI_INVALID_PARAMETER;
     }
@@ -158,6 +162,7 @@ static EFI_STATUS find_file_in_dir(const volume& vol, uint64_t dir, u16string_vi
                             vol.boot_sector->BytesPerSector);
 
     if (EFI_ERROR(Status)) {
+        do_print_error("process_fixups", Status);
         bs->FreePool(file);
         return Status;
     }
@@ -167,16 +172,20 @@ static EFI_STATUS find_file_in_dir(const volume& vol, uint64_t dir, u16string_vi
             case ntfs_attribute::INDEX_ALLOCATION:
                 if (att_name == u"$I30" && att.FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
                     Status = read_mappings(vol, att, &index_mappings);
-                    if (EFI_ERROR(Status))
+                    if (EFI_ERROR(Status)) {
+                        do_print_error("read_mappings", Status);
                         return false;
+                    }
                 }
             break;
 
             case ntfs_attribute::INDEX_ROOT:
                 if (att_name == u"$I30" && att.FormCode == NTFS_ATTRIBUTE_FORM::RESIDENT_FORM && !res_data.empty() && !ir) {
                     Status = bs->AllocatePool(EfiBootServicesData, res_data.size(), (void**)&ir);
-                    if (EFI_ERROR(Status))
+                    if (EFI_ERROR(Status)) {
+                        do_print_error("AllocatePool", Status);
                         return false;
+                    }
 
                     memcpy(ir, res_data.data(), res_data.size());
                 }
@@ -189,8 +198,10 @@ static EFI_STATUS find_file_in_dir(const volume& vol, uint64_t dir, u16string_vi
         return true;
     });
 
-    if (EFI_ERROR(Status2))
+    if (EFI_ERROR(Status2)) {
+        do_print_error("loop_through_atts", Status2);
         Status = Status2;
+    }
 
     if (EFI_ERROR(Status))
         goto end;
@@ -237,17 +248,22 @@ static EFI_STATUS find_file_in_dir(const volume& vol, uint64_t dir, u16string_vi
             if (!scratch) {
                 Status = bs->AllocatePool(EfiBootServicesData, ir->bytes_per_index_record,
                                          (void**)&scratch);
-                if (EFI_ERROR(Status))
+                if (EFI_ERROR(Status)) {
+                    do_print_error("AllocatePool", Status);
                     goto end;
+                }
             }
 
             Status = read_from_mappings(vol, &index_mappings, vcn, scratch, ir->bytes_per_index_record);
-            if (EFI_ERROR(Status))
+            if (EFI_ERROR(Status)) {
+                do_print_error("read_from_mappings", Status);
                 goto end;
+            }
 
             auto rec = reinterpret_cast<index_record*>(scratch);
 
             if (rec->MultiSectorHeader.Signature != INDEX_RECORD_MAGIC) {
+                // FIXME - print error
                 Status = EFI_INVALID_PARAMETER;
                 goto end;
             }
@@ -255,7 +271,7 @@ static EFI_STATUS find_file_in_dir(const volume& vol, uint64_t dir, u16string_vi
             Status = process_fixups(&rec->MultiSectorHeader, ir->bytes_per_index_record,
                                     vol.boot_sector->BytesPerSector);
             if (EFI_ERROR(Status)) {
-                Status = EFI_INVALID_PARAMETER;
+                do_print_error("process_fixups", Status);
                 goto end;
             }
 
