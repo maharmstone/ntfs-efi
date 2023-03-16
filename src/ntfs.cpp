@@ -1735,19 +1735,23 @@ static EFI_STATUS read_mft(volume& vol) {
     FILE_RECORD_SEGMENT_HEADER* mft;
 
     Status = bs->AllocatePool(EfiBootServicesData, vol.file_record_size, (void**)&mft);
-    if (EFI_ERROR(Status))
+    if (EFI_ERROR(Status)) {
+        do_print_error("AllocatePool", Status);
         return Status;
+    }
 
     Status = vol.block->ReadBlocks(vol.block, vol.block->Media->MediaId,
                                     (vol.boot_sector->MFT * vol.boot_sector->BytesPerSector * vol.boot_sector->SectorsPerCluster) / vol.block->Media->BlockSize,
                                     vol.file_record_size, mft);
     if (EFI_ERROR(Status)) {
         bs->FreePool(mft);
+        do_print_error("ReadBlocks", Status);
         return Status;
     }
 
     if (mft->MultiSectorHeader.Signature != NTFS_FILE_SIGNATURE) {
         bs->FreePool(mft);
+        // FIXME - print error
         return EFI_INVALID_PARAMETER;
     }
 
@@ -1755,6 +1759,7 @@ static EFI_STATUS read_mft(volume& vol) {
                             vol.boot_sector->BytesPerSector);
     if (EFI_ERROR(Status)) {
         bs->FreePool(mft);
+        do_print_error("process_fixups", Status);
         return Status;
     }
 
@@ -1765,6 +1770,9 @@ static EFI_STATUS read_mft(volume& vol) {
     Status2 = loop_through_atts(vol, NTFS_MFT_INODE, mft, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view, u16string_view att_name) -> bool {
         if (att.TypeCode == ntfs_attribute::DATA && att_name.empty()) {
             Status = read_mappings(vol, att, &vol.mft_mappings);
+            if (EFI_ERROR(Status))
+                do_print_error("read_mappings", Status);
+
             return false;
         }
 
@@ -1773,8 +1781,10 @@ static EFI_STATUS read_mft(volume& vol) {
 
     bs->FreePool(mft);
 
-    if (EFI_ERROR(Status2))
+    if (EFI_ERROR(Status2)) {
+        do_print_error("loop_through_atts", Status2);
         return Status2;
+    }
 
     return Status;
 }
