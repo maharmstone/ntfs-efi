@@ -699,12 +699,15 @@ static EFI_STATUS next_index_item(inode* ino, const invocable<string_view> auto&
 
             Status = bs->AllocatePool(EfiBootServicesData, offsetof(btree_level, data) + ir.bytes_per_index_record,
                                       (void**)&l2);
-            if (EFI_ERROR(Status))
+            if (EFI_ERROR(Status)) {
+                do_print_error("AllocatePool", Status);
                 return Status;
+            }
 
             Status = read_from_mappings(ino->vol, &ino->index_mappings, vcn, l2->data, ir.bytes_per_index_record);
             if (EFI_ERROR(Status)) {
                 bs->FreePool(l2);
+                do_print_error("read_from_mappings", Status);
                 return Status;
             }
 
@@ -712,6 +715,7 @@ static EFI_STATUS next_index_item(inode* ino, const invocable<string_view> auto&
 
             if (rec->MultiSectorHeader.Signature != INDEX_RECORD_MAGIC) {
                 bs->FreePool(l2);
+                // FIXME - print error
                 return EFI_INVALID_PARAMETER;
             }
 
@@ -719,6 +723,7 @@ static EFI_STATUS next_index_item(inode* ino, const invocable<string_view> auto&
                                     ino->vol.boot_sector->BytesPerSector);
             if (EFI_ERROR(Status)) {
                 bs->FreePool(l2);
+                do_print_error("process_fixups", Status);
                 return EFI_INVALID_PARAMETER;
             }
 
