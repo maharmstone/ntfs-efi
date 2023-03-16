@@ -66,7 +66,7 @@ static EFI_DRIVER_BINDING_PROTOCOL drvbind;
 
 static void populate_file_handle(EFI_FILE_PROTOCOL* h);
 static EFI_STATUS load_inode(inode* ino);
-static EFI_STATUS read_from_mappings(volume* vol, LIST_ENTRY* mappings, uint64_t offset,
+static EFI_STATUS read_from_mappings(const volume& vol, LIST_ENTRY* mappings, uint64_t offset,
                                      uint8_t* buf, uint64_t size);
 static EFI_STATUS process_fixups(MULTI_SECTOR_HEADER* header, uint64_t length,
                                  unsigned int sector_size);
@@ -142,7 +142,7 @@ static EFI_STATUS find_file_in_dir(volume* vol, uint64_t dir, u16string_view nam
     if (EFI_ERROR(Status))
         return Status;
 
-    Status = read_from_mappings(vol, &vol->mft_mappings, dir * vol->file_record_size,
+    Status = read_from_mappings(*vol, &vol->mft_mappings, dir * vol->file_record_size,
                                 (uint8_t*)file, vol->file_record_size);
     if (EFI_ERROR(Status)) {
         bs->FreePool(file);
@@ -241,7 +241,7 @@ static EFI_STATUS find_file_in_dir(volume* vol, uint64_t dir, u16string_view nam
                     goto end;
             }
 
-            Status = read_from_mappings(vol, &index_mappings, vcn, scratch, ir->bytes_per_index_record);
+            Status = read_from_mappings(*vol, &index_mappings, vcn, scratch, ir->bytes_per_index_record);
             if (EFI_ERROR(Status))
                 goto end;
 
@@ -588,10 +588,10 @@ static EFI_STATUS EFIAPI file_delete(struct _EFI_FILE_HANDLE* File) {
     return EFI_UNSUPPORTED;
 }
 
-static EFI_STATUS read_from_mappings(volume* vol, LIST_ENTRY* mappings, uint64_t offset, uint8_t* buf,
+static EFI_STATUS read_from_mappings(const volume& vol, LIST_ENTRY* mappings, uint64_t offset, uint8_t* buf,
                                      uint64_t size) {
     EFI_STATUS Status;
-    uint32_t cluster_size = vol->boot_sector->BytesPerSector * vol->boot_sector->SectorsPerCluster;
+    uint32_t cluster_size = vol.boot_sector->BytesPerSector * vol.boot_sector->SectorsPerCluster;
     uint64_t vcn = offset / cluster_size;
     uint64_t last_vcn = sector_align(offset + size, cluster_size) / cluster_size;
     LIST_ENTRY* le;
@@ -612,8 +612,8 @@ static EFI_STATUS read_from_mappings(volume* vol, LIST_ENTRY* mappings, uint64_t
             if (m->lcn == 0) // sparse
                 memset(buf, 0, to_read);
             else {
-                Status = vol->block->ReadBlocks(vol->block, vol->block->Media->MediaId,
-                                                ((m->lcn * cluster_size) + mapping_offset) / vol->block->Media->BlockSize,
+                Status = vol.block->ReadBlocks(vol.block, vol.block->Media->MediaId,
+                                                ((m->lcn * cluster_size) + mapping_offset) / vol.block->Media->BlockSize,
                                                 to_read, buf);
                 if (EFI_ERROR(Status))
                     return Status;
@@ -684,7 +684,7 @@ static EFI_STATUS next_index_item(inode* ino, const invocable<string_view> auto&
             if (EFI_ERROR(Status))
                 return Status;
 
-            Status = read_from_mappings(&ino->vol, &ino->index_mappings, vcn, l2->data, ir.bytes_per_index_record);
+            Status = read_from_mappings(ino->vol, &ino->index_mappings, vcn, l2->data, ir.bytes_per_index_record);
             if (EFI_ERROR(Status)) {
                 bs->FreePool(l2);
                 return Status;
@@ -900,7 +900,7 @@ static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
             return Status;
         }
 
-        Status = read_from_mappings(&ino->vol, &ino->vol.mft_mappings, ino->ino * ino->vol.file_record_size,
+        Status = read_from_mappings(ino->vol, &ino->vol.mft_mappings, ino->ino * ino->vol.file_record_size,
                                     (uint8_t*)file, ino->vol.file_record_size);
         if (EFI_ERROR(Status)) {
             do_print_error("read_from_mappings", Status);
@@ -982,7 +982,7 @@ static EFI_STATUS read_file(inode* ino, UINTN* BufferSize, VOID* Buffer) {
 
         // FIXME - compressed data (LZNT1 and WOF)
 
-        Status = read_from_mappings(&ino->vol, &ino->data_mappings, start_aligned,
+        Status = read_from_mappings(ino->vol, &ino->data_mappings, start_aligned,
                                     tmp ? tmp : (uint8_t*)Buffer, end_aligned - start_aligned);
         if (EFI_ERROR(Status)) {
             do_print_error("read_from_mappings", Status);
@@ -1116,7 +1116,7 @@ static EFI_STATUS loop_through_atts(volume* vol, uint64_t inode, const FILE_RECO
                         return Status;
                     }
 
-                    Status = read_from_mappings(vol, &mappings, 0, attlist, sector_align(attlist_size, cluster_size));
+                    Status = read_from_mappings(*vol, &mappings, 0, attlist, sector_align(attlist_size, cluster_size));
                     if (EFI_ERROR(Status)) {
                         while (!IsListEmpty(&mappings)) {
                             mapping* m = _CR(mappings.Flink, mapping, list_entry);
@@ -1248,7 +1248,7 @@ static EFI_STATUS loop_through_atts(volume* vol, uint64_t inode, const FILE_RECO
                         return Status;
                     }
 
-                    Status = read_from_mappings(vol, &vol->mft_mappings, file_reference * vol->file_record_size,
+                    Status = read_from_mappings(*vol, &vol->mft_mappings, file_reference * vol->file_record_size,
                                                 (uint8_t*)file2, vol->file_record_size);
                     if (EFI_ERROR(Status)) {
                         do_print_error("read_from_mappings", Status);
@@ -1461,7 +1461,7 @@ static EFI_STATUS load_inode(inode* ino) {
     if (EFI_ERROR(Status))
         return Status;
 
-    Status = read_from_mappings(&ino->vol, &ino->vol.mft_mappings, ino->ino * ino->vol.file_record_size,
+    Status = read_from_mappings(ino->vol, &ino->vol.mft_mappings, ino->ino * ino->vol.file_record_size,
                                 (uint8_t*)file, ino->vol.file_record_size);
     if (EFI_ERROR(Status)) {
         bs->FreePool(file);
@@ -1755,7 +1755,7 @@ static EFI_STATUS read_upcase(volume* vol) {
     if (EFI_ERROR(Status))
         return Status;
 
-    Status = read_from_mappings(vol, &vol->mft_mappings, NTFS_UPCASE_INODE * vol->file_record_size,
+    Status = read_from_mappings(*vol, &vol->mft_mappings, NTFS_UPCASE_INODE * vol->file_record_size,
                                 (uint8_t*)file, vol->file_record_size);
     if (EFI_ERROR(Status)) {
         bs->FreePool(file);
@@ -1799,7 +1799,7 @@ static EFI_STATUS read_upcase(volume* vol) {
     if (EFI_ERROR(Status))
         return Status;
 
-    Status = read_from_mappings(vol, &mappings, 0, (uint8_t*)vol->upcase, min(size, sizeof(vol->upcase)));
+    Status = read_from_mappings(*vol, &mappings, 0, (uint8_t*)vol->upcase, min(size, sizeof(vol->upcase)));
 
     while (!IsListEmpty(&mappings)) {
         mapping* m = _CR(mappings.Flink, mapping, list_entry);
