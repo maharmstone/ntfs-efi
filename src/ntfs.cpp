@@ -4,6 +4,8 @@
 #include <optional>
 #include <uchar.h>
 #include "ntfs.h"
+#include "misc.h"
+#include "quibbleproto.h"
 
 #define UNUSED(x) (void)(x)
 #define sector_align(n, a) ((n)&((a)-1)?(((n)+(a))&~((a)-1)):(n))
@@ -63,6 +65,7 @@ struct btree_level {
 static EFI_SYSTEM_TABLE* systable;
 static EFI_BOOT_SERVICES* bs;
 static EFI_DRIVER_BINDING_PROTOCOL drvbind;
+static EFI_QUIBBLE_INFO_PROTOCOL* info_proto = nullptr;
 
 static void populate_file_handle(EFI_FILE_PROTOCOL* h);
 static EFI_STATUS load_inode(inode* ino);
@@ -75,11 +78,20 @@ static EFI_STATUS read_mappings(const volume& vol, const ATTRIBUTE_RECORD_HEADER
 static EFI_STATUS loop_through_atts(const volume& vol, uint64_t inode, const FILE_RECORD_SEGMENT_HEADER* file_record,
                                     invocable<const ATTRIBUTE_RECORD_HEADER&, string_view, u16string_view> auto func);
 
-static void do_print_error(const char* func, EFI_STATUS Status) {
-    UNUSED(func);
-    UNUSED(Status);
+void do_print(const char* s) {
+    if (info_proto)
+        info_proto->Print(s);
+}
 
-    // FIXME
+void do_print_error(const char* func, EFI_STATUS Status) {
+    char s[255], *p;
+
+    p = stpcpy(s, func);
+    p = stpcpy(p, " returned ");
+    p = stpcpy(p, error_string(Status));
+    p = stpcpy(p, "\n");
+
+    do_print(s);
 }
 
 static EFI_STATUS drv_supported(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE ControllerHandle,
@@ -2012,6 +2024,33 @@ static EFI_STATUS EFIAPI drv_stop(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE 
     return EFI_INVALID_PARAMETER;
 }
 
+static void get_info_protocol(EFI_HANDLE image_handle) {
+    EFI_GUID guid = EFI_QUIBBLE_INFO_PROTOCOL_GUID;
+    EFI_HANDLE* handles = NULL;
+    UINTN count;
+    EFI_STATUS Status;
+
+    Status = bs->LocateHandleBuffer(ByProtocol, &guid, NULL, &count, &handles);
+    if (EFI_ERROR(Status))
+        return;
+
+    if (count == 0) {
+        bs->FreePool(handles);
+        return;
+    }
+
+    for (unsigned int i = 0; i < count; i++) {
+        Status = bs->OpenProtocol(handles[i], &guid, (void**)&info_proto, image_handle, NULL,
+                                  EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+        if (EFI_ERROR(Status))
+            continue;
+
+        break;
+    }
+
+    bs->FreePool(handles);
+}
+
 extern "C"
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
     EFI_STATUS Status;
@@ -2019,6 +2058,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
     systable = SystemTable;
     bs = SystemTable->BootServices;
+
+    get_info_protocol(ImageHandle);
 
     drvbind.Supported = drv_supported;
     drvbind.Start = drv_start;
