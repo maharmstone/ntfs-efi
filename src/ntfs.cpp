@@ -1684,17 +1684,17 @@ static EFI_STATUS EFIAPI open_volume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* This, EFI_
     return EFI_SUCCESS;
 }
 
-static EFI_STATUS read_mft(volume* vol) {
+static EFI_STATUS read_mft(volume& vol) {
     EFI_STATUS Status, Status2;
     FILE_RECORD_SEGMENT_HEADER* mft;
 
-    Status = bs->AllocatePool(EfiBootServicesData, vol->file_record_size, (void**)&mft);
+    Status = bs->AllocatePool(EfiBootServicesData, vol.file_record_size, (void**)&mft);
     if (EFI_ERROR(Status))
         return Status;
 
-    Status = vol->block->ReadBlocks(vol->block, vol->block->Media->MediaId,
-                                    (vol->boot_sector->MFT * vol->boot_sector->BytesPerSector * vol->boot_sector->SectorsPerCluster) / vol->block->Media->BlockSize,
-                                    vol->file_record_size, mft);
+    Status = vol.block->ReadBlocks(vol.block, vol.block->Media->MediaId,
+                                    (vol.boot_sector->MFT * vol.boot_sector->BytesPerSector * vol.boot_sector->SectorsPerCluster) / vol.block->Media->BlockSize,
+                                    vol.file_record_size, mft);
     if (EFI_ERROR(Status)) {
         bs->FreePool(mft);
         return Status;
@@ -1705,8 +1705,8 @@ static EFI_STATUS read_mft(volume* vol) {
         return EFI_INVALID_PARAMETER;
     }
 
-    Status = process_fixups(&mft->MultiSectorHeader, vol->file_record_size,
-                            vol->boot_sector->BytesPerSector);
+    Status = process_fixups(&mft->MultiSectorHeader, vol.file_record_size,
+                            vol.boot_sector->BytesPerSector);
     if (EFI_ERROR(Status)) {
         bs->FreePool(mft);
         return Status;
@@ -1716,9 +1716,9 @@ static EFI_STATUS read_mft(volume* vol) {
 
     Status = EFI_INVALID_PARAMETER;
 
-    Status2 = loop_through_atts(*vol, NTFS_MFT_INODE, mft, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view, u16string_view att_name) -> bool {
+    Status2 = loop_through_atts(vol, NTFS_MFT_INODE, mft, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view, u16string_view att_name) -> bool {
         if (att.TypeCode == ntfs_attribute::DATA && att_name.empty()) {
-            Status = read_mappings(*vol, att, &vol->mft_mappings);
+            Status = read_mappings(vol, att, &vol.mft_mappings);
             return false;
         }
 
@@ -1895,7 +1895,7 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
     InitializeListHead(&vol->mft_mappings);
 
-    Status = read_mft(vol);
+    Status = read_mft(*vol);
     if (EFI_ERROR(Status)) {
         do_print_error("read_mft", Status);
         vol->volume::~volume();
