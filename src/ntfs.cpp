@@ -2007,8 +2007,7 @@ static EFI_STATUS EFIAPI drv_stop(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE 
     UNUSED(NumberOfChildren);
     UNUSED(ChildHandleBuffer);
 
-    systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"drv_stop\r\n");
-    // FIXME
+    // FIXME - make this work(?)
 
     return EFI_INVALID_PARAMETER;
 }
