@@ -810,9 +810,6 @@ static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
     EFI_STATUS Status;
     bool overflow = false, again;
 
-    UNUSED(BufferSize);
-    UNUSED(Buffer);
-
     if (!ino->inode_loaded) {
         Status = load_inode(ino);
         if (EFI_ERROR(Status)) {
