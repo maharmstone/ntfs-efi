@@ -1631,14 +1631,14 @@ static EFI_STATUS load_inode(inode& ino) {
     return EFI_SUCCESS;
 }
 
-static EFI_STATUS get_inode_file_info(inode* ino, UINTN* BufferSize, VOID* Buffer) {
+static EFI_STATUS get_inode_file_info(inode& ino, UINTN* BufferSize, VOID* Buffer) {
     EFI_STATUS Status;
     unsigned int size = offsetof(EFI_FILE_INFO, FileName[0]) + sizeof(CHAR16);
     EFI_FILE_INFO* info = (EFI_FILE_INFO*)Buffer;
     u16string_view name;
 
-    if (ino->name) {
-        name = u16string_view(ino->name, ino->name_len);
+    if (ino.name) {
+        name = u16string_view(ino.name, ino.name_len);
 
         if (auto bs = name.rfind(u'\\'); bs != u16string_view::npos)
             name = u16string_view(name.data() + bs + 1, name.size() - bs - 1);
@@ -1651,8 +1651,8 @@ static EFI_STATUS get_inode_file_info(inode* ino, UINTN* BufferSize, VOID* Buffe
         return EFI_BUFFER_TOO_SMALL;
     }
 
-    if (!ino->inode_loaded) {
-        Status = load_inode(*ino);
+    if (!ino.inode_loaded) {
+        Status = load_inode(ino);
         if (EFI_ERROR(Status)) {
             do_print_error("load_inode", Status);
             return Status;
@@ -1660,12 +1660,12 @@ static EFI_STATUS get_inode_file_info(inode* ino, UINTN* BufferSize, VOID* Buffe
     }
 
     info->Size = size;
-    info->FileSize = ino->size;
-    info->PhysicalSize = ino->phys_size;
-    win_time_to_efi(ino->standard_info.CreationTime, &info->CreateTime);
-    win_time_to_efi(ino->standard_info.LastAccessTime, &info->LastAccessTime);
-    win_time_to_efi(ino->standard_info.LastWriteTime, &info->ModificationTime);
-    info->Attribute = win_attributes_to_efi(ino->standard_info.FileAttributes, ino->is_dir);
+    info->FileSize = ino.size;
+    info->PhysicalSize = ino.phys_size;
+    win_time_to_efi(ino.standard_info.CreationTime, &info->CreateTime);
+    win_time_to_efi(ino.standard_info.LastAccessTime, &info->LastAccessTime);
+    win_time_to_efi(ino.standard_info.LastWriteTime, &info->ModificationTime);
+    info->Attribute = win_attributes_to_efi(ino.standard_info.FileAttributes, ino.is_dir);
 
     if (!name.empty()) {
         memcpy(info->FileName, name.data(), name.size() * sizeof(char16_t));
@@ -1685,7 +1685,7 @@ static EFI_STATUS EFIAPI file_get_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* 
     if (memcmp(InformationType, &guid, sizeof(EFI_GUID)))
         return EFI_UNSUPPORTED;
 
-    return get_inode_file_info(ino, BufferSize, Buffer);
+    return get_inode_file_info(*ino, BufferSize, Buffer);
 }
 
 static EFI_STATUS EFIAPI file_set_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* InformationType, UINTN BufferSize, VOID* Buffer) {
