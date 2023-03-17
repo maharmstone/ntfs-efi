@@ -952,6 +952,15 @@ static EFI_STATUS read_file(inode& ino, UINTN* BufferSize, VOID* Buffer) {
             return EFI_INVALID_PARAMETER;
         }
 
+        Status = process_fixups(&file->MultiSectorHeader, ino.vol.file_record_size,
+                                ino.vol.boot_sector->BytesPerSector);
+
+        if (EFI_ERROR(Status)) {
+            do_print_error("process_fixups", Status);
+            bs->FreePool(file);
+            return Status;
+        }
+
         Status = EFI_SUCCESS;
 
         Status2 = loop_through_atts(ino.vol, ino.ino, file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view data, u16string_view att_name) -> bool {
