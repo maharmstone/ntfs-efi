@@ -691,24 +691,24 @@ static EFI_STATUS process_fixups(MULTI_SECTOR_HEADER* header, uint64_t length, u
     return EFI_SUCCESS;
 }
 
-static EFI_STATUS next_index_item(inode* ino, const invocable<string_view> auto& func) {
+static EFI_STATUS next_index_item(inode& ino, const invocable<string_view> auto& func) {
     EFI_STATUS Status;
-    const index_root& ir = *ino->index_root;
+    const index_root& ir = *ino.index_root;
 
-    if (IsListEmpty(&ino->levels))
+    if (IsListEmpty(&ino.levels))
         return EFI_NOT_FOUND;
 
-    auto l = _CR(ino->levels.Blink, btree_level, list_entry);
+    auto l = _CR(ino.levels.Blink, btree_level, list_entry);
 
     do {
         if (l->ent->flags & INDEX_ENTRY_SUBNODE) {
             btree_level* l2;
             uint64_t vcn = ((MFT_SEGMENT_REFERENCE*)((uint8_t*)l->ent + l->ent->entry_length - sizeof(uint64_t)))->SegmentNumber;
 
-            if (ir.bytes_per_index_record < ino->vol.boot_sector->BytesPerSector * ino->vol.boot_sector->SectorsPerCluster)
-                vcn *= ino->vol.boot_sector->BytesPerSector;
+            if (ir.bytes_per_index_record < ino.vol.boot_sector->BytesPerSector * ino.vol.boot_sector->SectorsPerCluster)
+                vcn *= ino.vol.boot_sector->BytesPerSector;
             else
-                vcn *= (uint64_t)ino->vol.boot_sector->BytesPerSector * (uint64_t)ino->vol.boot_sector->SectorsPerCluster;
+                vcn *= (uint64_t)ino.vol.boot_sector->BytesPerSector * (uint64_t)ino.vol.boot_sector->SectorsPerCluster;
 
             Status = bs->AllocatePool(EfiBootServicesData, offsetof(btree_level, data) + ir.bytes_per_index_record,
                                       (void**)&l2);
@@ -717,7 +717,7 @@ static EFI_STATUS next_index_item(inode* ino, const invocable<string_view> auto&
                 return Status;
             }
 
-            Status = read_from_mappings(ino->vol, &ino->index_mappings, vcn, l2->data, ir.bytes_per_index_record);
+            Status = read_from_mappings(ino.vol, &ino.index_mappings, vcn, l2->data, ir.bytes_per_index_record);
             if (EFI_ERROR(Status)) {
                 bs->FreePool(l2);
                 do_print_error("read_from_mappings", Status);
@@ -733,14 +733,14 @@ static EFI_STATUS next_index_item(inode* ino, const invocable<string_view> auto&
             }
 
             Status = process_fixups(&rec->MultiSectorHeader, ir.bytes_per_index_record,
-                                    ino->vol.boot_sector->BytesPerSector);
+                                    ino.vol.boot_sector->BytesPerSector);
             if (EFI_ERROR(Status)) {
                 bs->FreePool(l2);
                 do_print_error("process_fixups", Status);
                 return EFI_INVALID_PARAMETER;
             }
 
-            InsertTailList(&ino->levels, &l2->list_entry);
+            InsertTailList(&ino.levels, &l2->list_entry);
             l = l2;
             l->ent = reinterpret_cast<const index_entry*>((uint8_t*)&rec->header + rec->header.first_entry);
 
@@ -751,13 +751,13 @@ static EFI_STATUS next_index_item(inode* ino, const invocable<string_view> auto&
             RemoveEntryList(&l->list_entry);
             bs->FreePool(l);
 
-            if (IsListEmpty(&ino->levels))
+            if (IsListEmpty(&ino.levels))
                 break;
 
-            l = _CR(ino->levels.Blink, btree_level, list_entry);
+            l = _CR(ino.levels.Blink, btree_level, list_entry);
         }
 
-        if (IsListEmpty(&ino->levels))
+        if (IsListEmpty(&ino.levels))
             break;
 
         if (!(l->ent->flags & INDEX_ENTRY_LAST)) {
@@ -766,7 +766,7 @@ static EFI_STATUS next_index_item(inode* ino, const invocable<string_view> auto&
 
             return EFI_SUCCESS;
         }
-    } while (!IsListEmpty(&ino->levels));
+    } while (!IsListEmpty(&ino.levels));
 
     return EFI_SUCCESS;
 }
@@ -849,7 +849,7 @@ static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
     do {
         again = false;
 
-        Status = next_index_item(ino, [&](string_view data) -> bool {
+        Status = next_index_item(*ino, [&](string_view data) -> bool {
             size_t size;
 
             const auto& fn = *reinterpret_cast<const FILE_NAME*>(data.data());
