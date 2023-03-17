@@ -629,7 +629,7 @@ static EFI_STATUS read_from_mappings(const volume& vol, const LIST_ENTRY* mappin
     while (le != mappings) {
         mapping* m = _CR(le, mapping, list_entry);
 
-        if (m->vcn < last_vcn && m->vcn + m->length >= vcn) {
+        if (m->vcn < last_vcn && m->vcn + m->length > vcn) {
             uint64_t to_read, mapping_offset;
 
             mapping_offset = offset - (m->vcn * cluster_size);
