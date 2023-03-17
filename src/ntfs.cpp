@@ -119,7 +119,7 @@ static EFI_STATUS drv_supported(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE Co
 static int cmp_filenames(const char16_t* upcase, u16string_view fn1, u16string_view fn2) {
     // FIXME - what about directories with case-sensitivity flag set?
 
-    while (!fn1.empty() && !fn2.empty()) {
+    while (!fn1.empty() || !fn2.empty()) {
         if (fn1.empty())
             return -1;
 
