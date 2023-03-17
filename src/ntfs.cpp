@@ -819,19 +819,19 @@ static uint64_t win_attributes_to_efi(uint32_t attr, bool is_dir) {
     return ret;
 }
 
-static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
+static EFI_STATUS read_dir(inode& ino, UINTN* BufferSize, VOID* Buffer) {
     EFI_STATUS Status;
     bool overflow = false, again;
 
-    if (!ino->inode_loaded) {
-        Status = load_inode(ino);
+    if (!ino.inode_loaded) {
+        Status = load_inode(&ino);
         if (EFI_ERROR(Status)) {
             do_print_error("load_inode", Status);
             return Status;
         }
     }
 
-    if (ino->position == 0 && IsListEmpty(&ino->levels)) {
+    if (ino.position == 0 && IsListEmpty(&ino.levels)) {
         btree_level* l;
 
         Status = bs->AllocatePool(EfiBootServicesData, offsetof(btree_level, data), (void**)&l);
@@ -840,8 +840,8 @@ static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
             return Status;
         }
 
-        l->ent = reinterpret_cast<const index_entry*>((uint8_t*)&ino->index_root->node_header + ino->index_root->node_header.first_entry);
-        InsertTailList(&ino->levels, &l->list_entry);
+        l->ent = reinterpret_cast<const index_entry*>((uint8_t*)&ino.index_root->node_header + ino.index_root->node_header.first_entry);
+        InsertTailList(&ino.levels, &l->list_entry);
     }
 
     // FIXME - ignore special files in root
@@ -849,7 +849,7 @@ static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
     do {
         again = false;
 
-        Status = next_index_item(*ino, [&](string_view data) -> bool {
+        Status = next_index_item(ino, [&](string_view data) -> bool {
             size_t size;
 
             const auto& fn = *reinterpret_cast<const FILE_NAME*>(data.data());
@@ -882,7 +882,7 @@ static EFI_STATUS read_dir(inode* ino, UINTN* BufferSize, VOID* Buffer) {
 
             *BufferSize = size;
 
-            ino->position++;
+            ino.position++;
 
             return true;
         });
@@ -1059,7 +1059,7 @@ static EFI_STATUS EFIAPI file_read(struct _EFI_FILE_HANDLE* File, UINTN* BufferS
     }
 
     if (ino->is_dir)
-        return read_dir(ino, BufferSize, Buffer);
+        return read_dir(*ino, BufferSize, Buffer);
     else
         return read_file(ino, BufferSize, Buffer);
 }
