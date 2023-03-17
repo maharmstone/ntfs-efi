@@ -69,7 +69,7 @@ static EFI_DRIVER_BINDING_PROTOCOL drvbind;
 static EFI_QUIBBLE_INFO_PROTOCOL* info_proto = nullptr;
 
 static void populate_file_handle(EFI_FILE_PROTOCOL* h);
-static EFI_STATUS load_inode(inode* ino);
+static EFI_STATUS load_inode(inode& ino);
 static EFI_STATUS read_from_mappings(const volume& vol, const LIST_ENTRY* mappings, uint64_t offset,
                                      uint8_t* buf, uint64_t size);
 static EFI_STATUS process_fixups(MULTI_SECTOR_HEADER* header, uint64_t length,
@@ -824,7 +824,7 @@ static EFI_STATUS read_dir(inode& ino, UINTN* BufferSize, VOID* Buffer) {
     bool overflow = false, again;
 
     if (!ino.inode_loaded) {
-        Status = load_inode(&ino);
+        Status = load_inode(ino);
         if (EFI_ERROR(Status)) {
             do_print_error("load_inode", Status);
             return Status;
@@ -1051,7 +1051,7 @@ static EFI_STATUS EFIAPI file_read(struct _EFI_FILE_HANDLE* File, UINTN* BufferS
     inode* ino = _CR(File, inode, proto);
 
     if (!ino->inode_loaded) {
-        Status = load_inode(ino);
+        Status = load_inode(*ino);
         if (EFI_ERROR(Status)) {
             do_print_error("load_inode", Status);
             return Status;
@@ -1077,7 +1077,7 @@ static EFI_STATUS EFIAPI file_set_position(struct _EFI_FILE_HANDLE* File, UINT64
     inode* ino = _CR(File, inode, proto);
 
     if (!ino->inode_loaded) {
-        Status = load_inode(ino);
+        Status = load_inode(*ino);
         if (EFI_ERROR(Status)) {
             do_print_error("load_inode", Status);
             return Status;
@@ -1497,22 +1497,22 @@ static EFI_STATUS read_mappings(const volume& vol, const ATTRIBUTE_RECORD_HEADER
     return EFI_SUCCESS;
 }
 
-static EFI_STATUS load_inode(inode* ino) {
+static EFI_STATUS load_inode(inode& ino) {
     EFI_STATUS Status, Status2;
     FILE_RECORD_SEGMENT_HEADER* file;
 
-    InitializeListHead(&ino->index_mappings);
-    InitializeListHead(&ino->levels);
-    InitializeListHead(&ino->data_mappings);
+    InitializeListHead(&ino.index_mappings);
+    InitializeListHead(&ino.levels);
+    InitializeListHead(&ino.data_mappings);
 
-    Status = bs->AllocatePool(EfiBootServicesData, ino->vol.file_record_size, (void**)&file);
+    Status = bs->AllocatePool(EfiBootServicesData, ino.vol.file_record_size, (void**)&file);
     if (EFI_ERROR(Status)) {
         do_print_error("AllocatePool", Status);
         return Status;
     }
 
-    Status = read_from_mappings(ino->vol, &ino->vol.mft_mappings, ino->ino * ino->vol.file_record_size,
-                                (uint8_t*)file, ino->vol.file_record_size);
+    Status = read_from_mappings(ino.vol, &ino.vol.mft_mappings, ino.ino * ino.vol.file_record_size,
+                                (uint8_t*)file, ino.vol.file_record_size);
     if (EFI_ERROR(Status)) {
         bs->FreePool(file);
         do_print_error("read_from_mappings", Status);
@@ -1525,8 +1525,8 @@ static EFI_STATUS load_inode(inode* ino) {
         return EFI_INVALID_PARAMETER;
     }
 
-    Status = process_fixups(&file->MultiSectorHeader, ino->vol.file_record_size,
-                            ino->vol.boot_sector->BytesPerSector);
+    Status = process_fixups(&file->MultiSectorHeader, ino.vol.file_record_size,
+                            ino.vol.boot_sector->BytesPerSector);
 
     if (EFI_ERROR(Status)) {
         bs->FreePool(file);
@@ -1534,11 +1534,11 @@ static EFI_STATUS load_inode(inode* ino) {
         return Status;
     }
 
-    memset(&ino->standard_info, 0, sizeof(STANDARD_INFORMATION));
+    memset(&ino.standard_info, 0, sizeof(STANDARD_INFORMATION));
 
     Status = EFI_SUCCESS;
 
-    Status2 = loop_through_atts(ino->vol, ino->ino, file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view res_data, u16string_view att_name) -> bool {
+    Status2 = loop_through_atts(ino.vol, ino.ino, file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view res_data, u16string_view att_name) -> bool {
         switch (att.TypeCode) {
             case ntfs_attribute::STANDARD_INFORMATION:
                 if (att.FormCode == NTFS_ATTRIBUTE_FORM::RESIDENT_FORM) {
@@ -1547,7 +1547,7 @@ static EFI_STATUS load_inode(inode* ino) {
                     if (to_copy > sizeof(STANDARD_INFORMATION))
                         to_copy = sizeof(STANDARD_INFORMATION);
 
-                    memcpy(&ino->standard_info, res_data.data(), to_copy);
+                    memcpy(&ino.standard_info, res_data.data(), to_copy);
                 }
             break;
 
@@ -1556,17 +1556,17 @@ static EFI_STATUS load_inode(inode* ino) {
                     const auto& fn = *(FILE_NAME*)res_data.data();
 
                     if (res_data.size() >= offsetof(FILE_NAME, EaSize))
-                        ino->is_dir = fn.FileAttributes & FILE_ATTRIBUTE_DIRECTORY_MFT;
+                        ino.is_dir = fn.FileAttributes & FILE_ATTRIBUTE_DIRECTORY_MFT;
                 }
 
             break;
 
             case ntfs_attribute::INDEX_ALLOCATION:
                 if (att_name == u"$I30" && att.FormCode == NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM) {
-                    ino->size = att.Form.Nonresident.FileSize;
-                    ino->phys_size = att.Form.Nonresident.AllocatedLength;
+                    ino.size = att.Form.Nonresident.FileSize;
+                    ino.phys_size = att.Form.Nonresident.AllocatedLength;
 
-                    Status = read_mappings(ino->vol, att, &ino->index_mappings);
+                    Status = read_mappings(ino.vol, att, &ino.index_mappings);
                     if (EFI_ERROR(Status)) {
                         do_print_error("read_mappings", Status);
                         return false;
@@ -1575,14 +1575,14 @@ static EFI_STATUS load_inode(inode* ino) {
             break;
 
             case ntfs_attribute::INDEX_ROOT:
-                if (att_name == u"$I30" && att.FormCode == NTFS_ATTRIBUTE_FORM::RESIDENT_FORM && !res_data.empty() && !ino->index_root) {
-                    Status = bs->AllocatePool(EfiBootServicesData, res_data.size(), (void**)&ino->index_root);
+                if (att_name == u"$I30" && att.FormCode == NTFS_ATTRIBUTE_FORM::RESIDENT_FORM && !res_data.empty() && !ino.index_root) {
+                    Status = bs->AllocatePool(EfiBootServicesData, res_data.size(), (void**)&ino.index_root);
                     if (EFI_ERROR(Status)) {
                         do_print_error("AllocatePool", Status);
                         return false;
                     }
 
-                    memcpy(ino->index_root, res_data.data(), res_data.size());
+                    memcpy(ino.index_root, res_data.data(), res_data.size());
                 }
             break;
 
@@ -1590,13 +1590,13 @@ static EFI_STATUS load_inode(inode* ino) {
                 if (att_name.empty()) {
                     switch (att.FormCode) {
                         case NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM:
-                            ino->size = att.Form.Nonresident.FileSize;
-                            ino->phys_size = att.Form.Nonresident.AllocatedLength;
-                            ino->vdl = att.Form.Nonresident.ValidDataLength;
+                            ino.size = att.Form.Nonresident.FileSize;
+                            ino.phys_size = att.Form.Nonresident.AllocatedLength;
+                            ino.vdl = att.Form.Nonresident.ValidDataLength;
                         break;
 
                         case NTFS_ATTRIBUTE_FORM::RESIDENT_FORM:
-                            ino->size = ino->phys_size = ino->vdl = att.Form.Resident.ValueLength;
+                            ino.size = ino.phys_size = ino.vdl = att.Form.Resident.ValueLength;
                         break;
                     }
                 }
@@ -1615,16 +1615,16 @@ static EFI_STATUS load_inode(inode* ino) {
     }
 
     if (EFI_ERROR(Status)) {
-        if (ino->index_root) {
-            bs->FreePool(ino->index_root);
-            ino->index_root = nullptr;
+        if (ino.index_root) {
+            bs->FreePool(ino.index_root);
+            ino.index_root = nullptr;
         }
 
         bs->FreePool(file);
         return Status;
     }
 
-    ino->inode_loaded = true;
+    ino.inode_loaded = true;
 
     bs->FreePool(file);
 
@@ -1652,7 +1652,7 @@ static EFI_STATUS get_inode_file_info(inode* ino, UINTN* BufferSize, VOID* Buffe
     }
 
     if (!ino->inode_loaded) {
-        Status = load_inode(ino);
+        Status = load_inode(*ino);
         if (EFI_ERROR(Status)) {
             do_print_error("load_inode", Status);
             return Status;
