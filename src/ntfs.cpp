@@ -501,6 +501,9 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
         if (fn.empty())
             return EFI_NOT_FOUND;
 
+        if (file->ino == NTFS_ROOT_DIR_INODE && fn == u"..")
+            return EFI_INVALID_PARAMETER;
+
         Status = normalize_path(fn, u16string_view(file->name, file->name_len), name, name_len);
         if (EFI_ERROR(Status)) {
             do_print_error("normalize_path", Status);
