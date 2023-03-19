@@ -1049,7 +1049,7 @@ static EFI_STATUS read_file(inode& ino, UINTN* BufferSize, VOID* Buffer) {
         }
 
         if (valid_end < end)
-            memset((uint8_t*)Buffer + valid_end - start, 0, end - valid_end - start);
+            memset((uint8_t*)Buffer + valid_end - start, 0, end - valid_end);
     }
 
     ino.position = end;
