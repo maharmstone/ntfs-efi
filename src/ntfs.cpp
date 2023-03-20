@@ -1908,7 +1908,7 @@ static EFI_STATUS read_upcase(volume& vol) {
     if (EFI_ERROR(Status))
         return Status;
 
-    Status = read_from_mappings(vol, &mappings, 0, (uint8_t*)vol.upcase, min(size, sizeof(vol.upcase)));
+    Status = read_from_mappings(vol, &mappings, 0, (uint8_t*)vol.upcase, min(size, (uint64_t)sizeof(vol.upcase)));
 
     if (EFI_ERROR(Status))
         do_print_error("read_from_mappings", Status);
