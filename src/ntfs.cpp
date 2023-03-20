@@ -1914,18 +1914,18 @@ static EFI_STATUS EFIAPI get_arc_name(EFI_QUIBBLE_PROTOCOL* This, char* ArcName,
 }
 
 static EFI_STATUS get_driver_name(EFI_QUIBBLE_PROTOCOL* This, CHAR16* DriverName, UINTN* DriverNameLen) {
-    static constexpr u16string_view name = u"ntfs\0";
+    static const char16_t name[] = u"ntfs";
 
     UNUSED(This);
 
-    if (*DriverNameLen < name.length() * sizeof(char16_t)) {
-        *DriverNameLen = name.length() * sizeof(char16_t);
+    if (*DriverNameLen < sizeof(name)) {
+        *DriverNameLen = sizeof(name);
         return EFI_BUFFER_TOO_SMALL;
     }
 
-    *DriverNameLen = name.length() * sizeof(char16_t);
+    *DriverNameLen = sizeof(name);
 
-    memcpy(DriverName, name.data(), name.length() * sizeof(char16_t));
+    memcpy(DriverName, name, sizeof(name));
 
     return EFI_SUCCESS;
 }
