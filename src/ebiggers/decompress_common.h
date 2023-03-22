@@ -382,20 +382,6 @@ read_huffsym(struct input_bitstream *is, const u16 decode_table[],
 			    (max_codeword_len))				\
 )
 
-/*
- * Declare the decode table for a Huffman code, given several compile-time
- * constants that describe the code.  See DECODE_TABLE_ENOUGH() for details.
- *
- * Decode tables must be aligned to a DECODE_TABLE_ALIGNMENT-byte boundary.
- * This implies that if a decode table is nested inside a dynamically allocated
- * structure, then the outer structure must be allocated on a
- * DECODE_TABLE_ALIGNMENT-byte aligned boundary as well.
- */
-#define DECODE_TABLE(name, num_syms, table_bits, max_codeword_len) \
-	u16 name[DECODE_TABLE_SIZE((num_syms), (table_bits), \
-				   (max_codeword_len))]	\
-		_aligned_attribute(DECODE_TABLE_ALIGNMENT)
-
 extern int
 make_huffman_decode_table(u16 decode_table[], unsigned num_syms,
 			  unsigned table_bits, const u8 lens[],
