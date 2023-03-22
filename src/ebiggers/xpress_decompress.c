@@ -80,8 +80,7 @@ struct xpress_decompressor {
 			     XPRESS_TABLEBITS, XPRESS_MAX_CODEWORD_LEN);
 		u8 lens[XPRESS_NUM_SYMBOLS];
 	};
-	DECODE_TABLE_WORKING_SPACE(working_space, XPRESS_NUM_SYMBOLS,
-				   XPRESS_MAX_CODEWORD_LEN);
+	u16 working_space[2 * (XPRESS_MAX_CODEWORD_LEN + 1) + XPRESS_NUM_SYMBOLS]
 } _aligned_attribute(DECODE_TABLE_ALIGNMENT);
 
 int

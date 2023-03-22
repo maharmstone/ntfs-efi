@@ -92,18 +92,10 @@ struct lzx_decompressor {
 	};
 
 	union {
-		DECODE_TABLE_WORKING_SPACE(maincode_working_space,
-					   LZX_MAINCODE_MAX_NUM_SYMBOLS,
-					   LZX_MAX_MAIN_CODEWORD_LEN);
-		DECODE_TABLE_WORKING_SPACE(lencode_working_space,
-					   LZX_LENCODE_NUM_SYMBOLS,
-					   LZX_MAX_LEN_CODEWORD_LEN);
-		DECODE_TABLE_WORKING_SPACE(alignedcode_working_space,
-					   LZX_ALIGNEDCODE_NUM_SYMBOLS,
-					   LZX_MAX_ALIGNED_CODEWORD_LEN);
-		DECODE_TABLE_WORKING_SPACE(precode_working_space,
-					   LZX_PRECODE_NUM_SYMBOLS,
-					   LZX_MAX_PRE_CODEWORD_LEN);
+		u16 maincode_working_space[2 * (LZX_MAX_MAIN_CODEWORD_LEN + 1) + LZX_MAINCODE_MAX_NUM_SYMBOLS];
+		u16 lencode_working_space[2 * (LZX_MAX_LEN_CODEWORD_LEN + 1) + LZX_LENCODE_NUM_SYMBOLS];
+		u16 alignedcode_working_space[2 * (LZX_MAX_ALIGNED_CODEWORD_LEN + 1) + LZX_ALIGNEDCODE_NUM_SYMBOLS];
+		u16 precode_working_space[2 * (LZX_MAX_PRE_CODEWORD_LEN + 1) + LZX_PRECODE_NUM_SYMBOLS];
 	};
 
 	unsigned window_order;
