@@ -952,11 +952,71 @@ static EFI_STATUS read_nonresident_attribute(volume& vol, const ATTRIBUTE_RECORD
 }
 
 static EFI_STATUS handle_wof(span<const uint8_t> rp, span<const uint8_t> wof) {
-    // FIXME
+    if (rp.size() < offsetof(reparse_point_header, DataBuffer)) {
+        do_print("truncated IO_REPARSE_TAG_WOF reparse point buffer\n");
+        return EFI_INVALID_PARAMETER;
+    }
 
-    do_print("FIXME - WOF\n");
+    const auto& rph = *(reparse_point_header*)rp.data();
 
-    return EFI_INVALID_PARAMETER;
+    if (rp.size() < offsetof(reparse_point_header, DataBuffer) + rph.ReparseDataLength) {
+        do_print("truncated IO_REPARSE_TAG_WOF reparse point buffer\n");
+        return EFI_INVALID_PARAMETER;
+    }
+
+    if (rph.ReparseDataLength < sizeof(wof_external_info)) {
+        do_print("IO_REPARSE_TAG_WOF ReparseDataLength shorter than expected\n");
+        return EFI_INVALID_PARAMETER;
+    }
+
+    const auto& wofei = *(wof_external_info*)rph.DataBuffer;
+
+    if (wofei.Version != WOF_CURRENT_VERSION) {
+        do_print("Unsupported WOF version\n");
+        return EFI_INVALID_PARAMETER;
+    }
+
+    if (wofei.Provider == WOF_PROVIDER_WIM) {
+        do_print("Unsupported WOF provider WOF_PROVIDER_WIM\n");
+        return EFI_INVALID_PARAMETER;
+    } else if (wofei.Provider != WOF_PROVIDER_FILE) {
+        do_print("Unsupported WOF provider\n");
+        return EFI_INVALID_PARAMETER;
+    }
+
+    if (rph.ReparseDataLength < sizeof(wof_external_info) + sizeof(file_provider_external_info_v0)) {
+        do_print("IO_REPARSE_TAG_WOF ReparseDataLength shorter than expected\n");
+        return EFI_INVALID_PARAMETER;
+    }
+
+    const auto& fpei = *(file_provider_external_info_v0*)((uint8_t*)&wofei + sizeof(wofei));
+
+    if (fpei.Version != FILE_PROVIDER_CURRENT_VERSION) {
+        do_print("Unsupported FILE_PROVIDER_EXTERNAL_INFO version\n");
+        return EFI_INVALID_PARAMETER;
+    }
+
+    switch (fpei.Algorithm) {
+        case FILE_PROVIDER_COMPRESSION_XPRESS4K:
+            do_print("FIXME - FILE_PROVIDER_COMPRESSION_XPRESS4K\n");
+            return EFI_INVALID_PARAMETER;
+
+        case FILE_PROVIDER_COMPRESSION_LZX:
+            do_print("FIXME - FILE_PROVIDER_COMPRESSION_LZX\n");
+            return EFI_INVALID_PARAMETER;
+
+        case FILE_PROVIDER_COMPRESSION_XPRESS8K:
+            do_print("FIXME - FILE_PROVIDER_COMPRESSION_XPRESS8K\n");
+            return EFI_INVALID_PARAMETER;
+
+        case FILE_PROVIDER_COMPRESSION_XPRESS16K:
+            do_print("FIXME - FILE_PROVIDER_COMPRESSION_XPRESS16K\n");
+            return EFI_INVALID_PARAMETER;
+
+        default:
+            do_print("Unrecognized WIM compression algorithm\n");
+            return EFI_INVALID_PARAMETER;
+    }
 }
 
 static EFI_STATUS read_file(inode& ino, UINTN* BufferSize, VOID* Buffer) {

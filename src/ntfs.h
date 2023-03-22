@@ -223,6 +223,35 @@ struct attribute_list_entry {
     uint16_t instance;
 };
 
+struct reparse_point_header {  // edited form of REPARSE_DATA_BUFFER
+    uint32_t ReparseTag;
+    uint16_t ReparseDataLength;
+    uint16_t Reserved;
+    uint8_t DataBuffer[1];
+};
+
+static const uint32_t WOF_CURRENT_VERSION = 1;
+
+static const uint32_t WOF_PROVIDER_WIM = 1;
+static const uint32_t WOF_PROVIDER_FILE = 2;
+
+struct wof_external_info { // WOF_EXTERNAL_INFO in winioctl.h
+    uint32_t Version;
+    uint32_t Provider;
+};
+
+static const uint32_t FILE_PROVIDER_CURRENT_VERSION = 1;
+
+static const uint32_t FILE_PROVIDER_COMPRESSION_XPRESS4K = 0;
+static const uint32_t FILE_PROVIDER_COMPRESSION_LZX = 1;
+static const uint32_t FILE_PROVIDER_COMPRESSION_XPRESS8K = 2;
+static const uint32_t FILE_PROVIDER_COMPRESSION_XPRESS16K = 3;
+
+struct file_provider_external_info_v0 { // FILE_PROVIDER_EXTERNAL_INFO_V0 in winioctl.h
+    uint32_t Version;
+    uint32_t Algorithm;
+};
+
 #pragma pack(pop)
 
 #define NTFS_FS_NAME "NTFS    "
