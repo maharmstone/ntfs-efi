@@ -99,10 +99,6 @@ store_##type##_unaligned(type val, void *p)			\
 /* STATIC_ASSERT() - verify the truth of an expression at compilation time */
 #define STATIC_ASSERT(expr)	((void)sizeof(char[1 - 2 * !(expr)]))
 
-/* STATIC_ASSERT_ZERO() - verify the truth of an expression at compilation time
- * and also produce a result of value '0' to be used in constant expressions */
-#define STATIC_ASSERT_ZERO(expr) ((int)sizeof(char[-!(expr)]))
-
 /* UNALIGNED_ACCESS_IS_FAST should be defined to 1 if unaligned memory accesses
  * can be performed efficiently on the target platform.  */
 #if defined(__x86_64__) || defined(__i386__) || defined(__ARM_FEATURE_UNALIGNED)

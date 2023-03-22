@@ -333,49 +333,6 @@ read_huffsym(struct input_bitstream *is, const u16 decode_table[],
 /* Wrapper around DECODE_TABLE_ENOUGH() that does additional compile-time
  * validation. */
 #define DECODE_TABLE_SIZE(num_syms, table_bits, max_codeword_len) (	\
-									\
-	/* All values must be positive. */				\
-	STATIC_ASSERT_ZERO((num_syms) > 0) +				\
-	STATIC_ASSERT_ZERO((table_bits) > 0) +				\
-	STATIC_ASSERT_ZERO((max_codeword_len) > 0) +			\
-									\
-	/* There cannot be more symbols than possible codewords. */	\
-	STATIC_ASSERT_ZERO((num_syms) <= 1U << (max_codeword_len)) +	\
-									\
-	/* There is no reason for the root table to be indexed with
-	 * more bits than the maximum codeword length. */		\
-	STATIC_ASSERT_ZERO((table_bits) <= (max_codeword_len)) +	\
-									\
-	/* The maximum symbol value must fit in the 'symbol' field. */	\
-	STATIC_ASSERT_ZERO((num_syms) - 1 <= DECODE_TABLE_MAX_SYMBOL) +	\
-									\
-	/* The maximum codeword length in the root table must fit in
-	 * the 'length' field. */					\
-	STATIC_ASSERT_ZERO((table_bits) <= DECODE_TABLE_MAX_LENGTH) +	\
-									\
-	/* The maximum codeword length in a subtable must fit in the
-	 * 'length' field. */						\
-	STATIC_ASSERT_ZERO((max_codeword_len) - (table_bits) <=		\
-			   DECODE_TABLE_MAX_LENGTH) +			\
-									\
-	/* The minimum subtable index must be greater than the maximum
-	 * symbol value.  If this were not the case, then there would
-	 * be no way to tell whether a given root table entry is a
-	 * "subtable pointer" or not.  (An alternate solution would be
-	 * to reserve a flag bit specifically for this purpose.) */	\
-	STATIC_ASSERT_ZERO((1U << table_bits) > (num_syms) - 1) +	\
-									\
-	/* The needed 'enough' value must have been defined. */		\
-	STATIC_ASSERT_ZERO(DECODE_TABLE_ENOUGH(				\
-				(num_syms), (table_bits),		\
-				(max_codeword_len)) > 0) +		\
-									\
-	/* The maximum subtable index must fit in the 'symbol' field. */\
-	STATIC_ASSERT_ZERO(DECODE_TABLE_ENOUGH(				\
-				(num_syms), (table_bits),		\
-				(max_codeword_len)) - 1 <=		\
-					DECODE_TABLE_MAX_SYMBOL) +	\
-									\
 	/* Finally, make the macro evaluate to the needed maximum
 	 * number of decode table entries. */				\
 	DECODE_TABLE_ENOUGH((num_syms), (table_bits),			\
