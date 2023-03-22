@@ -977,6 +977,8 @@ static EFI_STATUS read_file(inode& ino, UINTN* BufferSize, VOID* Buffer) {
         FILE_RECORD_SEGMENT_HEADER* file;
         uint8_t* wof_data = nullptr;
         size_t wof_len = 0;
+        uint8_t* rp_data = nullptr;
+        size_t rp_len = 0;
 
         Status = bs->AllocatePool(EfiBootServicesData, ino.vol.file_record_size, (void**)&file);
         if (EFI_ERROR(Status)) {
@@ -1010,74 +1012,130 @@ static EFI_STATUS read_file(inode& ino, UINTN* BufferSize, VOID* Buffer) {
         Status = EFI_SUCCESS;
 
         Status2 = loop_through_atts(ino.vol, ino.ino, file, [&](const ATTRIBUTE_RECORD_HEADER& att, string_view data, u16string_view att_name) -> bool {
-            if (att.TypeCode == ntfs_attribute::DATA) {
-                if (att_name.empty()) {
-                    switch (att.FormCode) {
-                        case NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM:
-                            Status = read_mappings(ino.vol, att, &ino.data_mappings);
-                            if (EFI_ERROR(Status))
-                                do_print_error("read_mappings", Status);
-                            break;
-
-                        case NTFS_ATTRIBUTE_FORM::RESIDENT_FORM:
-                            Status = bs->AllocatePool(EfiBootServicesData, data.size(), (void**)&ino.data);
-                            if (EFI_ERROR(Status)) {
-                                do_print_error("AllocatePool", Status);
-                                break;
-                            }
-
-                            memcpy(ino.data, data.data(), data.size());
-                            break;
-                    }
-                } else if (att_name == u"WofCompressedData") {
-                    switch (att.FormCode) {
-                        case NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM: {
-                            uint32_t cluster_size = ino.vol.boot_sector->BytesPerSector * ino.vol.boot_sector->SectorsPerCluster;
-
-                            wof_len = att.Form.Nonresident.FileSize;
-
-                            if (wof_len == 0)
+            switch (att.TypeCode) {
+                case ntfs_attribute::DATA:
+                    if (att_name.empty()) {
+                        switch (att.FormCode) {
+                            case NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM:
+                                Status = read_mappings(ino.vol, att, &ino.data_mappings);
+                                if (EFI_ERROR(Status))
+                                    do_print_error("read_mappings", Status);
                                 break;
 
-                            Status = bs->AllocatePool(EfiBootServicesData, sector_align(wof_len, cluster_size), (void**)&wof_data);
-                            if (EFI_ERROR(Status)) {
-                                do_print_error("AllocatePool", Status);
-                                break;
-                            }
+                            case NTFS_ATTRIBUTE_FORM::RESIDENT_FORM:
+                                Status = bs->AllocatePool(EfiBootServicesData, data.size(), (void**)&ino.data);
+                                if (EFI_ERROR(Status)) {
+                                    do_print_error("AllocatePool", Status);
+                                    break;
+                                }
 
-                            Status = read_nonresident_attribute(ino.vol, att, span(wof_data, sector_align(wof_len, cluster_size)));
-                            if (EFI_ERROR(Status)) {
-                                do_print_error("read_nonresident_attribute", Status);
-                                bs->FreePool(wof_data);
-                                wof_data = nullptr;
+                                memcpy(ino.data, data.data(), data.size());
                                 break;
-                            }
-
-                            break;
                         }
+                    } else if (att_name == u"WofCompressedData") {
+                        switch (att.FormCode) {
+                            case NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM: {
+                                uint32_t cluster_size = ino.vol.boot_sector->BytesPerSector * ino.vol.boot_sector->SectorsPerCluster;
 
-                        case NTFS_ATTRIBUTE_FORM::RESIDENT_FORM:
-                            Status = bs->AllocatePool(EfiBootServicesData, data.size(), (void**)&wof_data);
-                            if (EFI_ERROR(Status)) {
-                                do_print_error("AllocatePool", Status);
+                                wof_len = att.Form.Nonresident.FileSize;
+
+                                if (wof_len == 0)
+                                    break;
+
+                                Status = bs->AllocatePool(EfiBootServicesData, sector_align(wof_len, cluster_size), (void**)&wof_data);
+                                if (EFI_ERROR(Status)) {
+                                    do_print_error("AllocatePool", Status);
+                                    break;
+                                }
+
+                                Status = read_nonresident_attribute(ino.vol, att, span(wof_data, sector_align(wof_len, cluster_size)));
+                                if (EFI_ERROR(Status)) {
+                                    do_print_error("read_nonresident_attribute", Status);
+                                    bs->FreePool(wof_data);
+                                    wof_data = nullptr;
+                                    break;
+                                }
+
                                 break;
                             }
 
-                            memcpy(wof_data, data.data(), data.size());
-                            wof_len = data.size();
+                            case NTFS_ATTRIBUTE_FORM::RESIDENT_FORM:
+                                Status = bs->AllocatePool(EfiBootServicesData, data.size(), (void**)&wof_data);
+                                if (EFI_ERROR(Status)) {
+                                    do_print_error("AllocatePool", Status);
+                                    break;
+                                }
 
-                            break;
+                                memcpy(wof_data, data.data(), data.size());
+                                wof_len = data.size();
+
+                                break;
+                        }
                     }
-                }
 
-                if (EFI_ERROR(Status))
-                    return false;
+                    if (EFI_ERROR(Status))
+                        return false;
+                break;
+
+                case ntfs_attribute::REPARSE_POINT:
+                    if (att_name.empty()) {
+                        switch (att.FormCode) {
+                            case NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM: {
+                                uint32_t cluster_size = ino.vol.boot_sector->BytesPerSector * ino.vol.boot_sector->SectorsPerCluster;
+
+                                rp_len = att.Form.Nonresident.FileSize;
+
+                                if (rp_len == 0)
+                                    break;
+
+                                Status = bs->AllocatePool(EfiBootServicesData, sector_align(rp_len, cluster_size), (void**)&rp_data);
+                                if (EFI_ERROR(Status)) {
+                                    do_print_error("AllocatePool", Status);
+                                    break;
+                                }
+
+                                Status = read_nonresident_attribute(ino.vol, att, span(rp_data, sector_align(rp_len, cluster_size)));
+                                if (EFI_ERROR(Status)) {
+                                    do_print_error("read_nonresident_attribute", Status);
+                                    bs->FreePool(rp_data);
+                                    rp_data = nullptr;
+                                    break;
+                                }
+
+                                break;
+                            }
+
+                            case NTFS_ATTRIBUTE_FORM::RESIDENT_FORM:
+                                Status = bs->AllocatePool(EfiBootServicesData, data.size(), (void**)&rp_data);
+                                if (EFI_ERROR(Status)) {
+                                    do_print_error("AllocatePool", Status);
+                                    break;
+                                }
+
+                                memcpy(rp_data, data.data(), data.size());
+                                rp_len = data.size();
+
+                                break;
+                        }
+                    }
+                    break;
+
+                default:
+                    break;
             }
 
             return true;
         });
 
         bs->FreePool(file);
+
+        if (rp_data) {
+            do_print("FIXME - reparse point\n");
+
+            // FIXME
+
+            bs->FreePool(rp_data);
+        }
 
         if (wof_data) {
             do_print("FIXME - WofCompressedData\n");
