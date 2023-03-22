@@ -28,6 +28,10 @@ endif()
 
 set(SRC_FILES src/ntfs.cpp
     src/misc.cpp
+    src/ebiggers/decompress_common.c
+    src/ebiggers/lzx_common.c
+    src/ebiggers/lzx_decompress.c
+    src/ebiggers/xpress_decompress.c
 )
 
 add_executable(ntfs ${SRC_FILES})
