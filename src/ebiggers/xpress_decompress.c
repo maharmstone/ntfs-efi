@@ -81,10 +81,10 @@
 
 struct xpress_decompressor {
 	union {
-		u16 decode_table[DECODE_TABLE_ENOUGH(XPRESS_NUM_SYMBOLS, XPRESS_TABLEBITS, XPRESS_MAX_CODEWORD_LEN)] _aligned_attribute(DECODE_TABLE_ALIGNMENT);
+		u16 decode_table[2566] _aligned_attribute(DECODE_TABLE_ALIGNMENT);
 		u8 lens[XPRESS_NUM_SYMBOLS];
 	};
-	u16 working_space[2 * (XPRESS_MAX_CODEWORD_LEN + 1) + XPRESS_NUM_SYMBOLS]
+	u16 working_space[2 * (XPRESS_MAX_CODEWORD_LEN + 1) + XPRESS_NUM_SYMBOLS];
 } _aligned_attribute(DECODE_TABLE_ALIGNMENT);
 
 int
