@@ -330,15 +330,6 @@ read_huffsym(struct input_bitstream *is, const u16 decode_table[],
 	((num_syms) == 799 && (table_bits) == 11 && (max_codeword_len) == 15) ? 2854 : \
 	-1)
 
-/* Wrapper around DECODE_TABLE_ENOUGH() that does additional compile-time
- * validation. */
-#define DECODE_TABLE_SIZE(num_syms, table_bits, max_codeword_len) (	\
-	/* Finally, make the macro evaluate to the needed maximum
-	 * number of decode table entries. */				\
-	DECODE_TABLE_ENOUGH((num_syms), (table_bits),			\
-			    (max_codeword_len))				\
-)
-
 extern int
 make_huffman_decode_table(u16 decode_table[], unsigned num_syms,
 			  unsigned table_bits, const u8 lens[],
