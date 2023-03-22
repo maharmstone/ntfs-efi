@@ -69,7 +69,12 @@
 
 #include "decompress_common.h"
 #include "system_compression.h"
-#include "xpress_constants.h"
+
+#define XPRESS_NUM_CHARS	256
+#define XPRESS_NUM_SYMBOLS	512
+#define XPRESS_MAX_CODEWORD_LEN	15
+
+#define XPRESS_MIN_MATCH_LEN	3
 
 /* This value is chosen for fast decompression.  */
 #define XPRESS_TABLEBITS 11
