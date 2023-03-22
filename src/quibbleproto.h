@@ -1,19 +1,19 @@
-/* Copyright (c) Mark Harmstone 2020
+/* Copyright (c) Mark Harmstone 2023
  *
- * This file is part of Quibble.
+ * This file is part of ntfs-efi.
  *
- * Quibble is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public Licence as published by
- * the Free Software Foundation, either version 3 of the Licence, or
+ * ntfs-efi is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public Licence as published by
+ * the Free Software Foundation, either version 2 of the Licence, or
  * (at your option) any later version.
  *
- * Quibble is distributed in the hope that it will be useful,
+ * ntfs-efi is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public Licence for more details.
+ * GNU General Public Licence for more details.
  *
- * You should have received a copy of the GNU Lesser General Public Licence
- * along with Quibble.  If not, see <http://www.gnu.org/licenses/>. */
+ * You should have received a copy of the GNU General Public Licence
+ * along with ntfs-efi.  If not, see <http://www.gnu.org/licenses/>. */
 
 #pragma once
 
