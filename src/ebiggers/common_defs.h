@@ -1,15 +1,7 @@
 #ifndef _COMMON_DEFS_H
 #define _COMMON_DEFS_H
 
-// #include <ntfs-3g/endians.h>
-// #include <ntfs-3g/types.h>
 #include <stdint.h>
-
-typedef uint8_t u8;
-typedef uint16_t u16;
-typedef uint32_t u32;
-typedef uint64_t u64;
-typedef int32_t s32;
 
 /* ========================================================================== */
 /*                              Type definitions                              */
@@ -159,7 +151,7 @@ store_##type##_unaligned(type v, void *p)			\
 
 #ifndef bsr32
 static forceinline unsigned
-bsr32(u32 v)
+bsr32(uint32_t v)
 {
 	unsigned bit = 0;
 	while ((v >>= 1) != 0)
@@ -170,7 +162,7 @@ bsr32(u32 v)
 
 #ifndef bsr64
 static forceinline unsigned
-bsr64(u64 v)
+bsr64(uint64_t v)
 {
 	unsigned bit = 0;
 	while ((v >>= 1) != 0)
@@ -197,7 +189,7 @@ bsrw(machine_word_t v)
 
 #ifndef bsf32
 static forceinline unsigned
-bsf32(u32 v)
+bsf32(uint32_t v)
 {
 	unsigned bit;
 	for (bit = 0; !(v & 1); bit++, v >>= 1)
@@ -208,7 +200,7 @@ bsf32(u32 v)
 
 #ifndef bsf64
 static forceinline unsigned
-bsf64(u64 v)
+bsf64(uint64_t v)
 {
 	unsigned bit;
 	for (bit = 0; !(v & 1); bit++, v >>= 1)

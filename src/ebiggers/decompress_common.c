@@ -116,14 +116,14 @@
  * Returns 0 on success, or -1 if the lengths do not form a valid prefix code.
  */
 int
-make_huffman_decode_table(u16 decode_table[], unsigned num_syms,
-			  unsigned table_bits, const u8 lens[],
-			  unsigned max_codeword_len, u16 working_space[])
+make_huffman_decode_table(uint16_t decode_table[], unsigned num_syms,
+			  unsigned table_bits, const uint8_t lens[],
+			  unsigned max_codeword_len, uint16_t working_space[])
 {
-	u16 * const len_counts = &working_space[0];
-	u16 * const offsets = &working_space[1 * (max_codeword_len + 1)];
-	u16 * const sorted_syms = &working_space[2 * (max_codeword_len + 1)];
-	s32 remainder = 1;
+	uint16_t * const len_counts = &working_space[0];
+	uint16_t * const offsets = &working_space[1 * (max_codeword_len + 1)];
+	uint16_t * const sorted_syms = &working_space[2 * (max_codeword_len + 1)];
+	int32_t remainder = 1;
 	uint8_t *entry_ptr = decode_table;
 	unsigned codeword_len = 1;
 	unsigned sym_idx;
@@ -251,11 +251,11 @@ make_huffman_decode_table(u16 decode_table[], unsigned num_syms,
 	{
 		unsigned end_sym_idx = sym_idx + len_counts[codeword_len];
 		for (; sym_idx < end_sym_idx; sym_idx++) {
-			u16 v = MAKE_DECODE_TABLE_ENTRY(sorted_syms[sym_idx],
+			uint16_t v = MAKE_DECODE_TABLE_ENTRY(sorted_syms[sym_idx],
 							codeword_len);
 			unsigned n = stores_per_loop;
 			do {
-				*(u16 *)entry_ptr = v;
+				*(uint16_t *)entry_ptr = v;
 				entry_ptr += sizeof(v);
 			} while (--n);
 		}
@@ -266,7 +266,7 @@ make_huffman_decode_table(u16 decode_table[], unsigned num_syms,
 		return 0;
 
 	/* At least one subtable is required.  Process the remaining symbols. */
-	codeword = ((u16 *)entry_ptr - decode_table) << 1;
+	codeword = ((uint16_t *)entry_ptr - decode_table) << 1;
 	subtable_pos = 1U << table_bits;
 	subtable_bits = table_bits;
 	subtable_prefix = -1;
@@ -298,7 +298,7 @@ make_huffman_decode_table(u16 decode_table[], unsigned num_syms,
 			 * code is complete.
 			 */
 			subtable_bits = codeword_len - table_bits;
-			remainder = (s32)1 << subtable_bits;
+			remainder = (int32_t)1 << subtable_bits;
 			for (;;) {
 				remainder -= len_counts[table_bits +
 							subtable_bits];
@@ -319,7 +319,7 @@ make_huffman_decode_table(u16 decode_table[], unsigned num_syms,
 		}
 
 		/* Fill the subtable entries for this symbol. */
-		u16 entry = MAKE_DECODE_TABLE_ENTRY(sorted_syms[sym_idx],
+		uint16_t entry = MAKE_DECODE_TABLE_ENTRY(sorted_syms[sym_idx],
 						    codeword_len - table_bits);
 		unsigned n = 1U << (subtable_bits - (codeword_len -
 						     table_bits));

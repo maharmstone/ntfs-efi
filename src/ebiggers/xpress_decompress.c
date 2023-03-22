@@ -81,10 +81,10 @@
 
 struct xpress_decompressor {
 	union {
-		u16 decode_table[2566] _aligned_attribute(DECODE_TABLE_ALIGNMENT);
-		u8 lens[XPRESS_NUM_SYMBOLS];
+		uint16_t decode_table[2566] _aligned_attribute(DECODE_TABLE_ALIGNMENT);
+		uint8_t lens[XPRESS_NUM_SYMBOLS];
 	};
-	u16 working_space[2 * (XPRESS_MAX_CODEWORD_LEN + 1) + XPRESS_NUM_SYMBOLS];
+	uint16_t working_space[2 * (XPRESS_MAX_CODEWORD_LEN + 1) + XPRESS_NUM_SYMBOLS];
 } _aligned_attribute(DECODE_TABLE_ALIGNMENT);
 
 int
@@ -92,10 +92,10 @@ xpress_decompress(struct xpress_decompressor * d,
                  const void *compressed_data, size_t compressed_size,
                  void *uncompressed_data, size_t uncompressed_size)
 {
-	const u8 * const in_begin = compressed_data;
-	u8 * const out_begin = uncompressed_data;
-	u8 *out_next = out_begin;
-	u8 * const out_end = out_begin + uncompressed_size;
+	const uint8_t * const in_begin = compressed_data;
+	uint8_t * const out_begin = uncompressed_data;
+	uint8_t *out_next = out_begin;
+	uint8_t * const out_end = out_begin + uncompressed_size;
 	struct input_bitstream is;
 
 	/* Read the Huffman codeword lengths.  */
@@ -121,8 +121,8 @@ xpress_decompress(struct xpress_decompressor * d,
 	while (out_next != out_end) {
 		unsigned sym;
 		unsigned log2_offset;
-		u32 length;
-		u32 offset;
+		uint32_t length;
+		uint32_t offset;
 
 		sym = read_huffsym(&is, d->decode_table,
 				   XPRESS_TABLEBITS, XPRESS_MAX_CODEWORD_LEN);
@@ -136,7 +136,7 @@ xpress_decompress(struct xpress_decompressor * d,
 
 			bitstream_ensure_bits(&is, 16);
 
-			offset = ((u32)1 << log2_offset) |
+			offset = ((uint32_t)1 << log2_offset) |
 				 bitstream_pop_bits(&is, log2_offset);
 
 			if (length == 0xf) {
