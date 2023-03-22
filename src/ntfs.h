@@ -243,3 +243,5 @@ struct attribute_list_entry {
 #define FILE_ATTRIBUTE_DIRECTORY            0x00000010
 #define FILE_ATTRIBUTE_ARCHIVE              0x00000020
 #define FILE_ATTRIBUTE_DIRECTORY_MFT        0x10000000
+
+static const uint32_t IO_REPARSE_TAG_WOF = 0x80000017;

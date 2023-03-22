@@ -951,6 +951,14 @@ static EFI_STATUS read_nonresident_attribute(volume& vol, const ATTRIBUTE_RECORD
     return Status;
 }
 
+static EFI_STATUS handle_wof(span<const uint8_t> rp, span<const uint8_t> wof) {
+    // FIXME
+
+    do_print("FIXME - WOF\n");
+
+    return EFI_INVALID_PARAMETER;
+}
+
 static EFI_STATUS read_file(inode& ino, UINTN* BufferSize, VOID* Buffer) {
     EFI_STATUS Status, Status2;
     uint64_t start, end;
@@ -1130,22 +1138,24 @@ static EFI_STATUS read_file(inode& ino, UINTN* BufferSize, VOID* Buffer) {
         bs->FreePool(file);
 
         if (rp_data) {
-            do_print("FIXME - reparse point\n");
+            if (rp_len > sizeof(uint32_t) && *(uint32_t*)rp_data == IO_REPARSE_TAG_WOF) {
+                Status = handle_wof(span(rp_data, rp_len), span(wof_data, wof_len));
+                if (EFI_ERROR(Status)) {
+                    do_print_error("handle_wof", Status);
+                    bs->FreePool(rp_data);
 
-            // FIXME
+                    if (wof_data)
+                        bs->FreePool(wof_data);
+
+                    return Status;
+                }
+            }
 
             bs->FreePool(rp_data);
         }
 
-        if (wof_data) {
-            do_print("FIXME - WofCompressedData\n");
-
-            // FIXME
-
+        if (wof_data)
             bs->FreePool(wof_data);
-
-            return EFI_INVALID_PARAMETER;
-        }
 
         if (EFI_ERROR(Status2)) {
             do_print_error("loop_through_atts", Status2);
