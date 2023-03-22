@@ -199,13 +199,6 @@ bitstream_align(struct input_bitstream *is)
 /*----------------------------------------------------------------------------*/
 
 /*
- * Required alignment for the Huffman decode tables.  We require this alignment
- * so that we can fill the entries with vector or word instructions and not have
- * to deal with misaligned buffers.
- */
-#define DECODE_TABLE_ALIGNMENT 16
-
-/*
  * Each decode table entry is 16 bits divided into two fields: 'symbol' (high 12
  * bits) and 'length' (low 4 bits).  The precise meaning of these fields depends
  * on the type of entry:

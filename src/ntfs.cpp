@@ -24,6 +24,7 @@
 #include "ntfs.h"
 #include "misc.h"
 #include "quibbleproto.h"
+#include "ebiggers/system_compression.h"
 
 #define UNUSED(x) (void)(x)
 #define sector_align(n, a) ((n)&((a)-1)?(((n)+(a))&~((a)-1)):(n))
@@ -951,7 +952,60 @@ static EFI_STATUS read_nonresident_attribute(volume& vol, const ATTRIBUTE_RECORD
     return Status;
 }
 
-static EFI_STATUS handle_wof(span<const uint8_t> rp, span<const uint8_t> wof) {
+static EFI_STATUS do_xpress_decompress(inode& ino, span<const uint8_t> compdata, uint32_t chunk_size) {
+    EFI_STATUS Status;
+    xpress_decompressor ctx;
+    uint64_t size = ino.size;
+    uint64_t num_chunks = (size + chunk_size - 1) / chunk_size;
+    auto offsets = (uint32_t*)compdata.data();
+
+    if (ino.data) {
+        bs->FreePool(ino.data);
+        ino.data = nullptr;
+    }
+
+    Status = bs->AllocatePool(EfiBootServicesData, ino.size, (void**)&ino.data);
+    if (EFI_ERROR(Status)) {
+        do_print_error("AllocatePool", Status);
+        return Status;
+    }
+
+    auto ret = span(ino.data, ino.size);
+
+    auto data = span(compdata.data() + ((num_chunks - 1) * sizeof(uint32_t)),
+                     (uint32_t)(compdata.size() - ((num_chunks - 1) * sizeof(uint32_t))));
+
+    for (uint64_t i = 0; i < num_chunks; i++) {
+        uint64_t off = i == 0 ? 0 : offsets[i - 1];
+        uint32_t complen;
+
+        if (i == 0)
+            complen = num_chunks > 1 ? offsets[0] : (uint32_t)data.size();
+        else if (i == num_chunks - 1)
+            complen = (uint32_t)data.size() - offsets[i - 1];
+        else
+            complen = offsets[i] - offsets[i - 1];
+
+        if (complen == (i == num_chunks - 1 ? (ret.size() - (i * chunk_size)) : chunk_size)) {
+            // stored uncompressed
+            memcpy(ret.data() + (i * chunk_size), data.data() + off, complen);
+        } else {
+            auto err = xpress_decompress(&ctx, data.data() + off, complen, ret.data() + (i * chunk_size),
+                                         (size_t)(i == num_chunks - 1 ? (ret.size() - (i * chunk_size)) : chunk_size));
+
+            if (err != 0) {
+                do_print("xpress_decompress failed\n");
+                bs->FreePool(ino.data);
+                ino.data = nullptr;
+                return EFI_INVALID_PARAMETER;
+            }
+        }
+    }
+
+    return EFI_SUCCESS;
+}
+
+static EFI_STATUS handle_wof(inode& ino, span<const uint8_t> rp, span<const uint8_t> wof) {
     if (rp.size() < offsetof(reparse_point_header, DataBuffer)) {
         do_print("truncated IO_REPARSE_TAG_WOF reparse point buffer\n");
         return EFI_INVALID_PARAMETER;
@@ -998,20 +1052,17 @@ static EFI_STATUS handle_wof(span<const uint8_t> rp, span<const uint8_t> wof) {
 
     switch (fpei.Algorithm) {
         case FILE_PROVIDER_COMPRESSION_XPRESS4K:
-            do_print("FIXME - FILE_PROVIDER_COMPRESSION_XPRESS4K\n");
-            return EFI_INVALID_PARAMETER;
+            return do_xpress_decompress(ino, wof, 4096);
 
         case FILE_PROVIDER_COMPRESSION_LZX:
             do_print("FIXME - FILE_PROVIDER_COMPRESSION_LZX\n");
             return EFI_INVALID_PARAMETER;
 
         case FILE_PROVIDER_COMPRESSION_XPRESS8K:
-            do_print("FIXME - FILE_PROVIDER_COMPRESSION_XPRESS8K\n");
-            return EFI_INVALID_PARAMETER;
+            return do_xpress_decompress(ino, wof, 8192);
 
         case FILE_PROVIDER_COMPRESSION_XPRESS16K:
-            do_print("FIXME - FILE_PROVIDER_COMPRESSION_XPRESS16K\n");
-            return EFI_INVALID_PARAMETER;
+            return do_xpress_decompress(ino, wof, 16384);
 
         default:
             do_print("Unrecognized WIM compression algorithm\n");
@@ -1199,7 +1250,7 @@ static EFI_STATUS read_file(inode& ino, UINTN* BufferSize, VOID* Buffer) {
 
         if (rp_data) {
             if (rp_len > sizeof(uint32_t) && *(uint32_t*)rp_data == IO_REPARSE_TAG_WOF) {
-                Status = handle_wof(span(rp_data, rp_len), span(wof_data, wof_len));
+                Status = handle_wof(ino, span(rp_data, rp_len), span(wof_data, wof_len));
                 if (EFI_ERROR(Status)) {
                     do_print_error("handle_wof", Status);
                     bs->FreePool(rp_data);
@@ -1256,7 +1307,7 @@ static EFI_STATUS read_file(inode& ino, UINTN* BufferSize, VOID* Buffer) {
             }
         }
 
-        // FIXME - compressed data (LZNT1 and WOF)
+        // FIXME - LZNT1 compressed data
 
         Status = read_from_mappings(ino.vol, &ino.data_mappings, start_aligned,
                                     tmp ? tmp : (uint8_t*)Buffer, end_aligned - start_aligned);
