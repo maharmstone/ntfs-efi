@@ -19,6 +19,7 @@
 #include <string.h>
 #include <string_view>
 #include <optional>
+#include <span>
 #include <uchar.h>
 #include "ntfs.h"
 #include "misc.h"
@@ -924,6 +925,32 @@ static EFI_STATUS read_dir(inode& ino, UINTN* BufferSize, VOID* Buffer) {
     return EFI_SUCCESS;
 }
 
+static EFI_STATUS read_nonresident_attribute(volume& vol, const ATTRIBUTE_RECORD_HEADER& att, span<uint8_t> data) {
+    EFI_STATUS Status;
+    LIST_ENTRY mappings;
+
+    InitializeListHead(&mappings);
+
+    Status = read_mappings(vol, att, &mappings);
+    if (EFI_ERROR(Status)) {
+        do_print_error("read_mappings", Status);
+        return Status;
+    }
+
+    Status = read_from_mappings(vol, &mappings, 0, data.data(), data.size());
+
+    while (!IsListEmpty(&mappings)) {
+        mapping* m = _CR(mappings.Flink, mapping, list_entry);
+        RemoveEntryList(&m->list_entry);
+        bs->FreePool(m);
+    }
+
+    if (EFI_ERROR(Status))
+        do_print_error("read_from_mappings", Status);
+
+    return Status;
+}
+
 static EFI_STATUS read_file(inode& ino, UINTN* BufferSize, VOID* Buffer) {
     EFI_STATUS Status, Status2;
     uint64_t start, end;
@@ -1005,10 +1032,7 @@ static EFI_STATUS read_file(inode& ino, UINTN* BufferSize, VOID* Buffer) {
                 } else if (att_name == u"WofCompressedData") {
                     switch (att.FormCode) {
                         case NTFS_ATTRIBUTE_FORM::NONRESIDENT_FORM: {
-                            LIST_ENTRY wof_mappings;
                             uint32_t cluster_size = ino.vol.boot_sector->BytesPerSector * ino.vol.boot_sector->SectorsPerCluster;
-
-                            InitializeListHead(&wof_mappings);
 
                             wof_len = att.Form.Nonresident.FileSize;
 
@@ -1021,24 +1045,9 @@ static EFI_STATUS read_file(inode& ino, UINTN* BufferSize, VOID* Buffer) {
                                 break;
                             }
 
-                            Status = read_mappings(ino.vol, att, &wof_mappings);
+                            Status = read_nonresident_attribute(ino.vol, att, span(wof_data, sector_align(wof_len, cluster_size)));
                             if (EFI_ERROR(Status)) {
-                                do_print_error("read_mappings", Status);
-                                bs->FreePool(wof_data);
-                                wof_data = nullptr;
-                                break;
-                            }
-
-                            Status = read_from_mappings(ino.vol, &wof_mappings, 0, wof_data, sector_align(wof_len, cluster_size));
-
-                            while (!IsListEmpty(&wof_mappings)) {
-                                mapping* m = _CR(wof_mappings.Flink, mapping, list_entry);
-                                RemoveEntryList(&m->list_entry);
-                                bs->FreePool(m);
-                            }
-
-                            if (EFI_ERROR(Status)) {
-                                do_print_error("read_from_mappings", Status);
+                                do_print_error("read_nonresident_attribute", Status);
                                 bs->FreePool(wof_data);
                                 wof_data = nullptr;
                                 break;
