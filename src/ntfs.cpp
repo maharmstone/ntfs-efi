@@ -1395,14 +1395,14 @@ static EFI_STATUS EFIAPI file_set_position(struct _EFI_FILE_HANDLE* File, UINT64
 }
 
 static EFI_STATUS EFIAPI file_get_position(struct _EFI_FILE_HANDLE* File, UINT64* Position) {
-    UNUSED(File);
-    UNUSED(Position);
+    inode* ino = _CR(File, inode, proto);
 
-    systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"file_get_position\r\n");
+    if (ino->is_dir)
+        return EFI_UNSUPPORTED;
 
-    // FIXME
+    *Position = ino->position;
 
-    return EFI_UNSUPPORTED;
+    return EFI_SUCCESS;
 }
 
 static EFI_STATUS loop_through_atts(const volume& vol, uint64_t inode, const FILE_RECORD_SEGMENT_HEADER* file_record,
