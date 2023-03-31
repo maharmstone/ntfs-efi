@@ -1,7 +1,7 @@
 ntfs-efi
 ---------
 
-btrfs-efi is an NTFS filesystem driver for EFI. It is intended for use with the free
+ntfs-efi is an NTFS filesystem driver for EFI. It is intended for use with the free
 Windows bootloader [Quibble](https://github.com/maharmstone/quibble), but you
 should be able to use it for anything EFI-related.
 
