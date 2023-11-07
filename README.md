@@ -11,6 +11,9 @@ Thanks to [Eric Biggers](https://github.com/ebiggers), who [successfully reverse
 Changelog
 ---------
 
+* 20231107
+  * Fixed memcpy miscompilation bug
+
 * 20230328
   * Initial release
 
