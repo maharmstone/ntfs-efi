@@ -113,7 +113,9 @@ int memcmp(const void* s1, const void* s2, size_t n) {
 }
 
 extern "C"
-void memcpy(void* dest, const void* src, size_t n) {
+void* memcpy(void* dest, const void* src, size_t n) {
+    void* orig_dest = dest;
+
 #if __INTPTR_WIDTH__ == 64
     while (n >= sizeof(uint64_t)) {
         *(uint64_t*)dest = *(uint64_t*)src;
@@ -151,6 +153,8 @@ void memcpy(void* dest, const void* src, size_t n) {
 
         n -= sizeof(uint8_t);
     }
+
+    return orig_dest;
 }
 
 const char* error_string(EFI_STATUS Status) {
