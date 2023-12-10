@@ -16,6 +16,7 @@
  * along with ntfs-efi.  If not, see <http://www.gnu.org/licenses/>. */
 
 #include <efi.h>
+#include <efilink.h>
 #include <string.h>
 #include <string_view>
 #include <optional>
