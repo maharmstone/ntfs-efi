@@ -124,7 +124,7 @@ make_huffman_decode_table(uint16_t decode_table[], unsigned num_syms,
 	uint16_t * const offsets = &working_space[1 * (max_codeword_len + 1)];
 	uint16_t * const sorted_syms = &working_space[2 * (max_codeword_len + 1)];
 	int32_t remainder = 1;
-	uint8_t *entry_ptr = decode_table;
+	uint8_t *entry_ptr = (uint8_t*)decode_table;
 	unsigned codeword_len = 1;
 	unsigned sym_idx;
 	unsigned codeword;
